@@ -1,6 +1,7 @@
 // Example taken from: https://github.com/theno/openssl-examples/blob/master/openssl-examples/tls-connect.c
 
-// Compile using: cc openssl_test.c -Iopenssl-4.0.1/include/ openssl-4.0.1/libssl.a openssl-4.0.1/libcrypto.a
+// Compile using: cc openssl_test.c -Iopenssl-4.0.1/include/ openssl-4.0.1/darwin-aarch64/libssl.a openssl-4.0.1/darwin-aarch64/libcrypto.a
+// This examples needs /etc/ssl/certs/ca-certificates.crt file to work. For local connections we will probably skip authentication step.
 
 #include "stdio.h"  // printf(), exit()
 
@@ -44,6 +45,7 @@ int tls_connect(char *hostname)
 
     if(! SSL_CTX_load_verify_locations(ctx,
                                        "/etc/ssl/certs/ca-certificates.crt",
+                                       // try to make this work with .pem files already present instead of .crt files
                                        NULL)) {
         fprintf(stderr, "Error loading trust store into SSL context\n");
         ERR_print_errors_fp(stderr);
