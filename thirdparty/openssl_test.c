@@ -1,7 +1,6 @@
 // Example taken from: https://github.com/theno/openssl-examples/blob/master/openssl-examples/tls-connect.c
 
 // Compile using: cc openssl_test.c -Iopenssl-4.0.1/include/ openssl-4.0.1/darwin-aarch64/libssl.a openssl-4.0.1/darwin-aarch64/libcrypto.a
-// This examples needs /etc/ssl/certs/ca-certificates.crt file to work. For local connections we will probably skip authentication step.
 
 #include "stdio.h"  // printf(), exit()
 
@@ -33,21 +32,11 @@ int tls_connect(char *hostname)
 
     //OpenSSL_add_all_algorithms();
 
-    /* Create SSL context structure and load the trust store
-     * (accepted root ca-certificates) */
+    /* Create SSL context structure */
 
     ctx = SSL_CTX_new(SSLv23_client_method());
     if(! ctx) {
         fprintf(stderr, "Error creating SSL context\n");
-        ERR_print_errors_fp(stderr);
-        exit(1);
-    }
-
-    if(! SSL_CTX_load_verify_locations(ctx,
-                                       "/etc/ssl/certs/ca-certificates.crt",
-                                       // try to make this work with .pem files already present instead of .crt files
-                                       NULL)) {
-        fprintf(stderr, "Error loading trust store into SSL context\n");
         ERR_print_errors_fp(stderr);
         exit(1);
     }
@@ -73,15 +62,6 @@ int tls_connect(char *hostname)
         BIO_free_all(cbio);
         SSL_CTX_free(ctx);
         exit(1);
-    }
-
-    /* Check the certificate */
-
-    if(SSL_get_verify_result(ssl) != X509_V_OK) {
-        fprintf(stderr,
-                "Certificate verification error: %i\n",
-                (int) SSL_get_verify_result(ssl));
-        /* continue */
     }
 
     /* send HTTP request to the server <hostname> */
