@@ -1,6 +1,13 @@
 #include <iostream>
 
-int main()
-{
-    std::cout << "Hello, World\n";
+int main() {
+    bool shouldQuit = false;
+    while(!shouldQuit) {
+        printf("# ");
+        std::string inp;
+        std::cin >> inp;
+        if (inp == "quit") {
+            shouldQuit = true;
+        }
+    }
 }
