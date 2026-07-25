@@ -11,17 +11,25 @@
 
 int main(int argc, char **argv)
 {
-    bool autorun;
+    bool autorun = false;
+    bool rebuild = false;
     for (int i=0; i<argc; i++) {
         if (!strcmp(argv[i], "run")) autorun = true;
+        if (!strcmp(argv[i], "rebuild")) rebuild = true;
     }
 
     NOB_GO_REBUILD_URSELF(argc, argv);
     nob_mkdir_if_not_exists(BUILD_DIR);
     Nob_Cmd cmd = {0};
 
-    if (nob_needs_rebuild1("build/main", "src/main.cpp")) {
+    if (nob_needs_rebuild1("build/main", "src/main.cpp") || rebuild) {
         nob_cmd_append(&cmd, "c++", "-Wall", "-Wextra", "-o", BUILD_DIR"main");
+
+        nob_cmd_append(&cmd, "-Ithirdparty/openssl-4.0.1/include/");
+        // will only work on macos for now 
+        nob_cmd_append(&cmd, "thirdparty/openssl-4.0.1/darwin-aarch64/libssl.a",
+                             "thirdparty/openssl-4.0.1/darwin-aarch64/libcrypto.a");
+
         nob_cmd_append(&cmd, "src/main.cpp");
     }
 
