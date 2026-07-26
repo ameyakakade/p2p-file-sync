@@ -1,13 +1,5 @@
-nob
-nob.old
-build/
-
-# Visual Studio cache and temporary files
+# Visual Studio cache
 .vs/
-*.suo
-*.user
-*.userosscache
-*.sln.docstates
 
 # Build outputs
 x64/
@@ -26,3 +18,10 @@ obj/
 *.log
 *.recipe
 *.vsix
+
+# Libraries and binaries
+*.a
+*.lib
+*.dylib
+*.so
+*.dll
