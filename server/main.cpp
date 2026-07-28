@@ -3,70 +3,22 @@
 #include <ws2tcpip.h>
 #include <thread>
 #include <string>
-#include <vector>
-#include <mutex>
-#include <algorithm>
 
 #pragma comment(lib, "ws2_32.lib")
 
 #define PORT 8080
 #define PASSWORD "secret123"
 
-using namespace std;
-
-vector<SOCKET> clients;
-mutex clients_mutex;
-
-void sendMessage(const string& msg, SOCKET sender) {
-    lock_guard<mutex> lock(clients_mutex);
-    for (SOCKET client : clients) {
-        if (client != sender) {
-            send(client, msg.c_str(), msg.length(), 0);
-        }
-    }
-}
-
-void removeClient(SOCKET client) {
-    lock_guard<mutex> lock(clients_mutex);
-    clients.erase(remove(clients.begin(), clients.end(), client), clients.end());
-    closesocket(client);
-}
-
-void handleClient(SOCKET client, string clientId) {
-    char buffer[1024] = { 0 };
-    int bytes = recv(client, buffer, sizeof(buffer) - 1, 0);
-
-    if (bytes <= 0 || string(buffer) != PASSWORD) {
-        string failMsg = "Authentication failed. Closing connection.";
-        send(client, failMsg.c_str(), failMsg.length(), 0);
-        closesocket(client);
-        return;
-    }
-    // Match client's expected response ("AUTH_OK")
-    string okMsg = "AUTH_OK";
-    send(client, okMsg.c_str(), okMsg.length(), 0);
-
-    {
-        lock_guard<mutex> lock(clients_mutex);
-        clients.push_back(client);
-    }
-
-    cout << "Client " << clientId << " connected and authenticated.\n";
-    sendMessage("*** " + clientId + " has joined the chat. ***\n", client);
-
+void receive_messages(SOCKET client_socket) {
+    char buffer[1024];
     while (true) {
         memset(buffer, 0, sizeof(buffer));
-        int bytes_recd = recv(client, buffer, sizeof(buffer) - 1, 0);
-
-        if (bytes_recd <= 0) {
-            cout << "Client " << clientId << " disconnected." << endl;
-
-            sendMessage("*** " + clientId + " has left the chat. ***\n", client);
-            removeClient(client);
+        int bytes_received = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
+        if (bytes_received <= 0) {
+            std::cout << "\nClient disconnected.\n";
             break;
         }
-
-        sendMessage(clientId + " > " + string(buffer) + "\n", client);
+        std::cout << "\nClient: " << buffer << "\nServer > " << std::flush;
     }
 }
 
@@ -84,25 +36,44 @@ int main() {
     server_addr.sin_port = htons(PORT);
 
     bind(server_socket, (sockaddr*)&server_addr, sizeof(server_addr));
-    listen(server_socket, 5);
+    listen(server_socket, 1);
 
     std::cout << "Server listening on port " << PORT << "...\n";
-    int clientsCount = 0;
 
-    while (true) {
-        sockaddr_in client_addr;
-        int client_size = sizeof(client_addr);
-        SOCKET client_socket = accept(server_socket, (sockaddr*)&client_addr, &client_size);
-        if (client_socket == INVALID_SOCKET) {
-            continue;
-        }
+    sockaddr_in client_addr;
+    int client_size = sizeof(client_addr);
+    SOCKET client_socket = accept(server_socket, (sockaddr*)&client_addr, &client_size);
 
-        clientsCount++;
-        string clientId = "Client" + to_string(clientsCount);
-        thread client_thread(handleClient, client_socket, clientId);
-        client_thread.detach();
+    std::cout << "Client connected! Verifying password...\n";
+
+    // Password Check
+    char pass_buf[1024] = { 0 };
+    recv(client_socket, pass_buf, sizeof(pass_buf) - 1, 0);
+
+    if (std::string(pass_buf) != PASSWORD) {
+        std::cout << "Incorrect password attempt. Closing connection.\n";
+        send(client_socket, "AUTH_FAILED", 11, 0);
+        closesocket(client_socket);
+        closesocket(server_socket);
+        WSACleanup();
+        return 0;
     }
 
+    send(client_socket, "AUTH_OK", 7, 0);
+    std::cout << "Client authenticated successfully!\n--- CHAT STARTED ---\n";
+
+    std::thread rx_thread(receive_messages, client_socket);
+    rx_thread.detach();
+
+    std::string msg;
+    while (true) {
+        std::cout << "Server > ";
+        std::getline(std::cin, msg);
+        if (msg == "exit") break;
+        send(client_socket, msg.c_str(), msg.length(), 0);
+    }
+
+    closesocket(client_socket);
     closesocket(server_socket);
     WSACleanup();
     return 0;
