@@ -39,24 +39,29 @@ int main(int argc, char **argv)
 
     // building main.cpp
     if (nob_needs_rebuild1(BUILD_DIR"main"EXT, "src/main.cpp") || rebuild) {
-        #ifdef _WIN32
+#ifdef _WIN32
         // do nothing for now
-        #else
+#else
         nob_cmd_append(&cmd, "c++", "-Wall", "-Wextra", "-o", BUILD_DIR"main");
         nob_cmd_append(&cmd, "src/main.cpp");
-        #endif /* win32 */
+#ifdef __APPLE__
+#else
+        nob_cmd_append(&cmd, "thirdparty/openssl-4.0.1/linux-x86_64/libssl.a");
+        nob_cmd_append(&cmd, "thirdparty/openssl-4.0.1/linux-x86_64/libcrypto.a");
+#endif  /* apple */
+#endif /* win32 */
     }
 
     RUN;
 
     //building server
     if (nob_needs_rebuild1(BUILD_DIR"server"EXT, "server/main.cpp") || rebuild) {
-        #ifdef _WIN32
+#ifdef _WIN32
         nob_cmd_append(&cmd, "cl", "-o", BUILD_DIR"server");
         nob_cmd_append(&cmd, "server/main.cpp");
-        #else
+#else
         // do nothing for now
-        #endif /* win32 */
+#endif /* win32 */
     }
 
     RUN;
