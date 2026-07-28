@@ -18,3 +18,9 @@ files, and connects to another receiver for sending files.
 
 "Using SSL BIO might work for this method." -> Talked with gemini, too
 overpowered for our applicationm, sticking with normal sockets.
+
+## Helpful links
+Socket Programing: https://web.stanford.edu/class/archive/cs/cs107/cs107.1238/lectures/20/quickref.html
+TLS Examples: https://stackoverflow.com/questions/7698488/turn-a-simple-socket-into-an-ssl-socket
+
+https://blog.netherlabs.nl/articles/2009/01/18/the-ultimate-so_linger-page-or-why-is-my-tcp-not-reliable
