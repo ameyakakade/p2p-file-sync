@@ -1,9 +1,7 @@
-# Visual Studio & Cache
+# Visual Studio cache
 .vs/
-*.suo
-*.user
 
-# Build directories
+# Build outputs
 x64/
 x86/
 Debug/
@@ -11,7 +9,7 @@ Release/
 bin/
 obj/
 
-# Executables & Symbol files
+# Executables and symbol files
 *.exe
 *.obj
 *.pdb
@@ -19,3 +17,11 @@ obj/
 *.tlog
 *.log
 *.recipe
+*.vsix
+
+# Libraries and binaries
+*.a
+*.lib
+*.dylib
+*.so
+*.dll
