@@ -44,7 +44,10 @@ int main(int argc, char **argv)
 #else
         nob_cmd_append(&cmd, "c++", "-Wall", "-Wextra", "-o", BUILD_DIR"main");
         nob_cmd_append(&cmd, "src/main.cpp");
+        nob_cmd_append(&cmd, "-Ithirdparty/openssl-4.0.1/include/");
 #ifdef __APPLE__
+        nob_cmd_append(&cmd, "thirdparty/openssl-4.0.1/darwin-aarch64/libssl.a");
+        nob_cmd_append(&cmd, "thirdparty/openssl-4.0.1/darwin-aarch64/libcrypto.a");
 #else
         nob_cmd_append(&cmd, "thirdparty/openssl-4.0.1/linux-x86_64/libssl.a");
         nob_cmd_append(&cmd, "thirdparty/openssl-4.0.1/linux-x86_64/libcrypto.a");
