@@ -51,12 +51,9 @@ int tls_connect(char *hostname)
 
     /* Connect to server <hostname> */
 
-    int a = 1;
-    while(a){
-        if(!BIO_set_conn_hostname(cbio, "localhost:8989")) {
-            a = 0;
-        }
-    }
+    sprintf(name, "%s:%s", hostname, "https");
+
+    BIO_set_conn_hostname(cbio, name);
 
     if(BIO_do_connect(cbio) <= 0) {
         fprintf(stderr, "Error attempting to connect\n");
