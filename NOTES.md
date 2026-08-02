@@ -2,19 +2,20 @@
 
 ## Todo
 - [ ] Implement server-client using SSL. Do not worry about discovery
-      right now.
+      right now. Later
+- [ ] Implement merkle trees for checking file changes.
 
 ## Notes
-### Might be useful for documentation
-Gemini said using a "serverless" method where two tcp ports bind and
-connect without "listening" is not a viable option. SSL needs a
-server-client relationship. Better option is making the device both a
-server that listens for connections and connects to device when
-necessary. Gemini talked about "UDP discovery", sounds like a way of
-using UDP which does not require handshake to "broadcast" that we are
-a file server with our IP. The other devices can then recognize it and
-connect to it if needed. Thus, every device is a server for receiving
-files, and connects to another receiver for sending files.
+Use mDNS for discovery. Every node in the network must be a client and
+a server.
+
+### Merkle trees for tracking files
+Merkle Trees: https://youtu.be/qHMLy5JjbjQ?si=a96aL6ZA4SCxAo6I
+Use merkle trees along with timestamps to track changes. Calculate the
+hashes and compare the merkle tree only when the timestamps have
+changed.
+
+Use sqlite to store timestamps.
 
 "Using SSL BIO might work for this method." -> Talked with gemini, too
 overpowered for our applicationm, sticking with normal sockets.
