@@ -42,7 +42,7 @@ int main(int argc, char **argv)
         #ifdef _WIN32
         // do nothing for now
         #else
-        nob_cmd_append(&cmd, "c++", "-Wall", "-Wextra", "-o", BUILD_DIR"main");
+        nob_cmd_append(&cmd, "c++", "-std=c++17", "-Wall", "-Wextra", "-o", BUILD_DIR"main");
         nob_cmd_append(&cmd, "src/main.cpp");
         #endif /* win32 */
     }
