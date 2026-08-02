@@ -50,7 +50,7 @@ int main(int argc, char **argv)
     RUN;
 
     //building server
-    if (nob_needs_rebuild1(BUILD_DIR"server"EXT, "server/main.cpp") || rebulid) {
+    if (nob_needs_rebuild1(BUILD_DIR"server"EXT, "server/main.cpp") || rebuild) {
         #ifdef _WIN32
         nob_cmd_append(&cmd, "cl", "-o", BUILD_DIR"server");
         nob_cmd_append(&cmd, "server/main.cpp");
