@@ -55,71 +55,76 @@ std::vector<fs::path> getAllFiles(const fs::path& dir){
     return filePaths;
 }
 
-class MerkleTree{
+struct MerkleTreeNode{
+    fs::path         nodePath;
+    bool             isDirectory;
+    uint64_t         hash;
+    std::vector<int> children;
+};
+
+class MerkleTree {
   public:
-    std::string             name;
-    fs::path                fullpath;
-    bool                    isDirectory;
-    uint64_t                hash;
-    std::vector<MerkleTree> children;
+    std::vector<MerkleTreeNode> pool;
 
-    void buildTree(const fs::path& dirPath){
-        name = dirPath.filename().empty() ? dirPath.string() : dirPath.filename().string();
-        fullpath = dirPath;
-        isDirectory = true;
+    // bool checkIfEqual(const MerkleTree& other) {
+    //     return hash == other.hash;
+    // }
 
-        if(!fs::exists(dirPath) || !fs::is_directory(dirPath)){
-            std::cerr << "Error: Invalid directory path -> " << dirPath << "\n";
-            return;
-        }
-        std::error_code ec;
-        std::vector<fs::directory_entry> entries;
-        for(const auto& entry : fs::directory_iterator(dirPath, ec)){
-            entries.push_back(entry);
-        }
-        std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
-            return a.path().filename().string() < b.path().filename().string();
-        }); // to ensure consistency in calculating the merkle tree
+    int buildTree(const fs::path& path){
+        MerkleTreeNode curr;
+        int i = pool.size();
+        pool.push_back(curr);
+        uint64_t manifest = calculateStringHash(path);
+        curr.nodePath = path;
 
-        std::string manifest = "";
-        for(const auto& entry : entries){
-            MerkleTree childNode;
-            childNode.name = entry.path().filename().string();
-            childNode.fullpath = entry.path();
-            if(entry.is_directory(ec)){
-                childNode.isDirectory = true;
-                childNode.buildTree(entry.path());
-            } else if(entry.is_regular_file(ec)){
-                childNode.isDirectory = false;
-                childNode.hash = hashFile(entry.path());
-            } else{
-                continue;
+        if(fs::is_directory(path)) {
+            curr.isDirectory = true;
+
+            if(!fs::exists(path) || !fs::is_directory(path)){
+                std::cerr << "Error: Invalid directory path -> " << path << "\n";
+                return -1;
             }
-            children.push_back(childNode);
 
-            int typeTag = childNode.isDirectory ? 0 : 1;
-            manifest += typeTag + calculateStringHash(childNode.name) + childNode.hash;
-        
+            std::error_code ec;
+            std::vector<fs::directory_entry> entries;
+ 
+           for(const auto& entry : fs::directory_iterator(path, ec)){
+                entries.push_back(entry);
+            }
+
+            std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
+                return a.path().string() < b.path().string();
+            }); // to ensure consistency in calculating the merkle tree
+
+            for(const auto& entry : entries){
+                int childNode = buildTree(entry.path());
+                curr.children.push_back(childNode);
+                int typeTag = pool[childNode].isDirectory ? 0 : 1;
+                manifest += typeTag + calculateStringHash(pool[childNode].nodePath) + pool[childNode].hash;
+            }
+            curr.hash = manifest;
+
+        } else if(fs::is_regular_file(path)) {
+            curr.isDirectory = false;
+            curr.hash = hashFile(path);
         }
-        hash = calculateStringHash(manifest);
+
+        pool[i] = curr;
+
+        return i;
     }
 
-    void printMerkleTree(int depth = 0){
+    void printMerkleTree(int node, int depth = 0){
         for(int i = 0; i<depth*4; i++){ std::cout << ' ';}
-        if(isDirectory){
-            std::cout << "[DIR]  " << name << " (Folder Hash: " << hash << ")\n";
-            for(auto& child : children){
-                child.printMerkleTree(depth+1);
+        if(pool[node].isDirectory){
+            std::cout << "[DIR]  " << pool[node].nodePath << " (Folder Hash: " << pool[node].hash << ")\n";
+            for(auto& child : pool[node].children){
+                printMerkleTree(child, depth+1);
             }
         } else{
-            std::cout << "->     " << name << " (File Hash: " << hash << ")\n";
+            std::cout << "->     " << pool[node].nodePath << " (File Hash: " << pool[node].hash << ")\n";
         }
     }
-
-    bool checkIfEqual(const MerkleTree& other) {
-        return hash == other.hash;
-    }
-
 };
 
 const std::string tempDirs[]  = {"dir1", "dir2", "dir3"};
@@ -156,23 +161,29 @@ int main(int argv, char** argc) {
     }
 
     MerkleTree old;
-    old.buildTree("../baskell");
-    
-    while(true) {
-        MerkleTree root;
-        root.buildTree("../baskell");
-        //std::cout << root.name;
-        if (!root.checkIfEqual(old)) {
-            time_t my_time = time(NULL);
-            std::cout << "CHANGE DETECTED ";
-            printf("At time, %s ", ctime(&my_time));
+    old.buildTree(tempDir);
+    old.printMerkleTree(0);
+    for (auto& a : old.pool) {
+        for(int b : a.children) {
+            std::cout << " " << b;
         }
-        old = root;
-        //root.printMerkleTree(0);
+        std::cout << a.nodePath << "\n";
     }
+    
+    // while(true) {
+    //     MerkleTree root;
+    //     root.buildTree(tempDir);
+    //     //std::cout << root.name;
+    //     if (!root.checkIfEqual(old)) {
+    //         time_t my_time = time(NULL);
+    //         std::cout << "CHANGE DETECTED ";
+    //         printf("At time, %s ", ctime(&my_time));
+    //     }
+    //     old = root;
+    // }
 
     printf("Traversing directory tree\n");
-    traverseDirectory(tempDir, 0);
+    // traverseDirectory(tempDir, 0);
 
     if(removeTempDir) {
         printf("Deleting temporary directories.\n");
