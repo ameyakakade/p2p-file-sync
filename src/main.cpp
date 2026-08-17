@@ -6,196 +6,265 @@
 #include <iomanip>
 #include <algorithm>
 #include <filesystem>
-#include <functional>
-#include <time.h>
-
-#define CAN_FAIL(exp) do {                                              \
-        int a = exp;                                                    \
-        if(a) {                                                         \
-            printf("Failed with code %d at %s:%d\n",                    \
-                   a, __FILE__, __LINE__);                              \
-            exit(1);                                                    \
-        }                                                               \
-    } while(0);
+#include <unordered_map>
+#include <cstdint>
 
 namespace fs = std::filesystem;
 
-uint64_t calculateBufferHash(const char* data, size_t length) {
-    uint64_t hash = 14695981039346656037ULL;
-    const uint64_t fnvPrime = 1099511628211ULL;
+const uint64_t FNV_OFFSET_BASIS = 14695981039346656037ULL;
+const uint64_t FNV_PRIME        = 1099511628211ULL;
 
+uint64_t combineHash(uint64_t currentHash, uint64_t newHash) {
+    currentHash ^= newHash;
+    currentHash *= FNV_PRIME;
+    return currentHash;
+}
+
+uint64_t calculateBufferHash(const char* data, size_t length) {
+    uint64_t hash = FNV_OFFSET_BASIS;
     for (size_t i = 0; i < length; ++i) {
         hash ^= static_cast<uint64_t>(static_cast<unsigned char>(data[i]));
-        hash *= fnvPrime;
+        hash *= FNV_PRIME;
     }
-
     return hash;
 }
 
-uint64_t calculateStringHash(const std::string& inp){
+uint64_t calculateStringHash(const std::string& inp) {
     return calculateBufferHash(inp.data(), inp.size());
 }
 
-uint64_t hashFile(const fs::path & filepath){
-    std::ifstream file(filepath, std::ios::binary | std::ios::ate);
-    if(!file.is_open()){
-        std::cerr << "Could not open file\n";
+uint64_t hashFile(const fs::path& filepath) {
+    std::ifstream file(filepath, std::ios::binary);
+    if (!file.is_open()) {
+        std::cerr << "Could not open file: " << filepath << "\n";
         return 0;
     }
-    std::streamsize fileSize = file.tellg();
-    file.seekg(0, std::ios::beg);
-    std::vector<char> buffer(fileSize);
-    if(!file.read(buffer.data(), fileSize)) return 0;
-    // TODO: Write a function that reads the file in chunks when hashing
-    return calculateBufferHash(buffer.data(), buffer.size());
-}
 
-std::vector<fs::path> getAllFiles(const fs::path& dir){
-    std::vector<fs::path> filePaths;
-    if(!fs::is_directory(dir) || !fs::exists(dir)){
-        std::cout << "Invalid Directory! \n";
-        return filePaths;
-    }
-    for(const auto& file : fs::recursive_directory_iterator(dir)){
-        if(file.is_regular_file()){
-            filePaths.push_back(file.path());
+    const size_t bufferSize = 65536;
+    std::vector<char> buffer(bufferSize);
+    uint64_t hash = FNV_OFFSET_BASIS;
+
+    while (file.read(buffer.data(), bufferSize) || file.gcount() > 0) {
+        size_t bytesRead = file.gcount();
+        for (size_t i = 0; i < bytesRead; ++i) {
+            hash ^= static_cast<uint64_t>(static_cast<unsigned char>(buffer[i]));
+            hash *= FNV_PRIME;
         }
     }
-    std::sort(filePaths.begin(), filePaths.end());
-    return filePaths;
+    return hash;
 }
 
-struct MerkleTreeNode{
-    fs::path         nodePath;
+// merkle tree structure
+
+struct MerkleTreeNode {
+    fs::path         relPath;      
     bool             isDirectory;
     uint64_t         hash;
-    std::vector<int> children;
+    std::vector<int> children;     // Indices into the pool vector
+};
+
+enum class DiffType {
+    ADDED,      // Exists in Remote, missing locally
+    MODIFIED,   // Content/hash mismatch
+    DELETED     // Exists locally, missing in Remote
+};
+
+struct FileDifference {
+    std::string relPath;
+    DiffType    type;
 };
 
 class MerkleTree {
-  public:
+public:
     std::vector<MerkleTreeNode> pool;
 
-    // bool checkIfEqual(const MerkleTree& other) {
-    //     return hash == other.hash;
-    // }
+    void clear() {
+        pool.clear();
+    }
+    
+    int buildTree(const fs::path& path, const fs::path& rootPath = "") {
+        fs::path baseRoot = rootPath.empty() ? path : rootPath;
 
-    int buildTree(const fs::path& path){
+        if (!fs::exists(path)) {
+            std::cerr << "Error: Path does not exist -> " << path << "\n";
+            return -1;
+        }
+
         MerkleTreeNode curr;
-        int i = pool.size();
-        pool.push_back(curr);
-        uint64_t manifest = calculateStringHash(path);
-        curr.nodePath = path;
+        curr.relPath = fs::relative(path, baseRoot);
+        curr.hash = FNV_OFFSET_BASIS;
 
-        if(fs::is_directory(path)) {
+        int myIndex = static_cast<int>(pool.size());
+        pool.push_back(curr); 
+
+        if (fs::is_directory(path)) {
             curr.isDirectory = true;
-
-            if(!fs::exists(path) || !fs::is_directory(path)){
-                std::cerr << "Error: Invalid directory path -> " << path << "\n";
-                return -1;
-            }
 
             std::error_code ec;
             std::vector<fs::directory_entry> entries;
- 
-           for(const auto& entry : fs::directory_iterator(path, ec)){
+            for (const auto& entry : fs::directory_iterator(path, ec)) {
                 entries.push_back(entry);
             }
-
             std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
-                return a.path().string() < b.path().string();
-            }); // to ensure consistency in calculating the merkle tree
+                return a.path().filename().string() < b.path().filename().string();
+            });
 
-            for(const auto& entry : entries){
-                int childNode = buildTree(entry.path());
-                curr.children.push_back(childNode);
-                int typeTag = pool[childNode].isDirectory ? 0 : 1;
-                manifest += typeTag + calculateStringHash(pool[childNode].nodePath) + pool[childNode].hash;
+            // Mix directory name into hash
+            std::string dirName = curr.relPath.empty() ? "." : curr.relPath.filename().string();
+            curr.hash = combineHash(curr.hash, calculateStringHash(dirName));
+
+            for (const auto& entry : entries) {
+                int childIndex = buildTree(entry.path(), baseRoot);
+                if (childIndex == -1) continue;
+
+                curr.children.push_back(childIndex);
+                uint64_t typeTag = pool[childIndex].isDirectory ? 0xAA : 0x55;
+                curr.hash = combineHash(curr.hash, typeTag);
+                curr.hash = combineHash(curr.hash, pool[childIndex].hash);
             }
-            curr.hash = manifest;
 
-        } else if(fs::is_regular_file(path)) {
+        } else if (fs::is_regular_file(path)) {
             curr.isDirectory = false;
             curr.hash = hashFile(path);
         }
 
-        pool[i] = curr;
-
-        return i;
+        pool[myIndex] = curr; // Save updated data back into reserved index
+        return myIndex;
     }
 
-    void printMerkleTree(int node, int depth = 0){
-        for(int i = 0; i<depth*4; i++){ std::cout << ' ';}
-        if(pool[node].isDirectory){
-            std::cout << "[DIR]  " << pool[node].nodePath << " (Folder Hash: " << pool[node].hash << ")\n";
-            for(auto& child : pool[node].children){
-                printMerkleTree(child, depth+1);
+    bool checkIfEqual(const MerkleTree& other) const {
+        if (pool.empty() || other.pool.empty()) return false;
+        return pool[0].hash == other.pool[0].hash;
+    }
+
+    void printMerkleTree(int nodeIndex = 0, int depth = 0) const {
+        if (nodeIndex < 0 || nodeIndex >= static_cast<int>(pool.size())) return;
+
+        for (int i = 0; i < depth * 4; i++) std::cout << ' ';
+        const auto& node = pool[nodeIndex];
+
+        std::string displayPath = node.relPath.empty() ? "." : node.relPath.generic_string();
+
+        if (node.isDirectory) {
+            std::cout << "[DIR]  " << displayPath 
+                      << " (Hash: 0x" << std::hex << std::setw(16) << std::setfill('0') 
+                      << node.hash << std::dec << ")\n";
+            for (int child : node.children) {
+                printMerkleTree(child, depth + 1);
             }
-        } else{
-            std::cout << "[FILE] " << pool[node].nodePath << " (File Hash: " << pool[node].hash << ")\n";
+        } else {
+            std::cout << "[FILE] " << displayPath 
+                      << " (Hash: 0x" << std::hex << std::setw(16) << std::setfill('0') 
+                      << node.hash << std::dec << ")\n";
+        }
+    }
+    
+    static void compareNodes(const MerkleTree& localTree, int localIdx,
+                             const MerkleTree& remoteTree, int remoteIdx,
+                             std::vector<FileDifference>& diffs) {
+        const auto& lNode = localTree.pool[localIdx];
+        const auto& rNode = remoteTree.pool[remoteIdx];
+
+        // If subtree hashes match, skip checking this entire branch
+        if (lNode.hash == rNode.hash) return;
+
+        // Leaf file comparison
+        if (!lNode.isDirectory && !rNode.isDirectory) {
+            diffs.push_back({lNode.relPath.generic_string(), DiffType::MODIFIED});
+            return;
+        }
+
+        // Map child relative paths to their pool index for remote directory
+        std::unordered_map<std::string, int> remoteChildrenMap;
+        for (int rChild : rNode.children) {
+            remoteChildrenMap[remoteTree.pool[rChild].relPath.generic_string()] = rChild;
+        }
+
+        // Check local children against remote
+        for (int lChild : lNode.children) {
+            std::string lPath = localTree.pool[lChild].relPath.generic_string();
+            auto it = remoteChildrenMap.find(lPath);
+
+            if (it == remoteChildrenMap.end()) {
+                // Present locally but absent in remote
+                diffs.push_back({lPath, DiffType::DELETED});
+            } else {
+                // Present in both : dive deeper into children
+                compareNodes(localTree, lChild, remoteTree, it->second, diffs);
+                remoteChildrenMap.erase(it); // Mark as checked
+            }
+        }
+
+        // Any remaining items in remoteChildrenMap exist only in remote
+        for (const auto& [rPath, rChild] : remoteChildrenMap) {
+            diffs.push_back({rPath, DiffType::ADDED});
         }
     }
 
+    static std::vector<FileDifference> findDifferences(const MerkleTree& localTree, const MerkleTree& remoteTree) {
+        std::vector<FileDifference> diffs;
+        if (localTree.pool.empty() || remoteTree.pool.empty()) return diffs;
+        compareNodes(localTree, 0, remoteTree, 0, diffs);
+        return diffs;
+    }
 };
 
-const std::string tempDirs[]  = {"dir1", "dir2", "dir3"};
-const std::string tempDirs2[] = {"nd1" , "nd2" , "nd3"};
+int main() {
+    fs::path localFolder = "test_local";
+    fs::path remoteFolder = "test_remote";
 
-void traverseDirectory(fs::path directoryPath, int depth) {
-    for(auto dir : fs::directory_iterator(directoryPath)) {
-        for(int i=0; i<depth*4; i++) putchar(' ');
-        printf("'%s'\n", dir.path().c_str());
-        if(dir.is_directory()) {
-            traverseDirectory(dir.path(), depth+1);
-        }
-    }
-}
-
-int main(int argv, char** argc) {
-    bool removeTempDir  = false;
-    bool createTempDirs = true;
-    if(argv > 1) {
-        std::string i = argc[1];
-        if(i == "rmd") removeTempDir = true;
+    //mock local directory
+    fs::create_directories(localFolder / "docs");
+    fs::create_directories(localFolder / "photos");
+    {
+        std::ofstream(localFolder / "docs" / "report.txt") << "Local version of report";
+        std::ofstream(localFolder / "docs" / "notes.txt")  << "Shared notes text";
+        std::ofstream(localFolder / "photos" / "old.png")  << "Binary photo data";
     }
 
-    const fs::path tempDir{"temp"};
-    fs::create_directory(tempDir); // may error
+    //mock remote peer directory 
+    fs::create_directories(remoteFolder / "docs");
+    fs::create_directories(remoteFolder / "photos");
+    {
+        std::ofstream(remoteFolder / "docs" / "report.txt") << "Remote MODIFIED version"; // MODIFIED
+        std::ofstream(remoteFolder / "docs" / "notes.txt")  << "Shared notes text";        // SAME
+        std::ofstream(remoteFolder / "photos" / "new.jpg")  << "New photo uploaded";      // ADDED in remote
+        // photos/old.png is missing in remote                                             // DELETED
+    }
+    
+    MerkleTree localTree;
+    localTree.buildTree(localFolder);
 
-    if(createTempDirs) {
-        printf("Creating temporary directories.\n");
-        for(auto it : tempDirs) {
-            for(auto it2 : tempDirs2) {
-                fs::create_directories(tempDir/it/it2); // may error
+    MerkleTree remoteTree;
+    remoteTree.buildTree(remoteFolder);
+
+    std::cout << "Local Tree" << std::endl;
+    localTree.printMerkleTree(0);
+
+    std::cout << "\nRemote Tree" << std::endl;
+    remoteTree.printMerkleTree(0);
+
+    std::cout << "\nRoot Hash Comparison : " << std::endl;
+    if (localTree.checkIfEqual(remoteTree)) {
+        std::cout << "All folders and files are in sync!\n";
+    } else {
+        std::cout << "Root mismatch detected!\n\n";
+        
+        std::vector<FileDifference> diffs = MerkleTree::findDifferences(localTree, remoteTree);
+        for (const auto& diff : diffs) {
+            if (diff.type == DiffType::ADDED) {
+                std::cout << "[+] ADDED on Remote   : " << diff.relPath << " (Needs download)\n";
+            } else if (diff.type == DiffType::MODIFIED) {
+                std::cout << "[*] MODIFIED on Remote: " << diff.relPath << " (Needs update)\n";
+            } else if (diff.type == DiffType::DELETED) {
+                std::cout << "[-] MISSING on Remote : " << diff.relPath << " (Local-only / deleted)\n";
             }
         }
     }
 
-    MerkleTree old;
-    old.buildTree(tempDir);
-    old.printMerkleTree(0);
-    // for (auto& a : old.pool) {
-    //     for(int b : a.children) {
-    //         std::cout << " " << b;
-    //     }
-    //     std::cout << a.nodePath << "\n";
-    // }
     
-    // while(true) {
-    //     MerkleTree root;
-    //     root.buildTree(tempDir);
-    //     //std::cout << root.name;
-    //     if (!root.checkIfEqual(old)) {
-    //         time_t my_time = time(NULL);
-    //         std::cout << "CHANGE DETECTED ";
-    //         printf("At time, %s ", ctime(&my_time));
-    //     }
-    //     old = root;
-    // }
+    fs::remove_all(localFolder);
+    fs::remove_all(remoteFolder);
 
-    if(removeTempDir) {
-        printf("Deleting temporary directories.\n");
-        fs::remove_all(tempDir);
-    }
     return 0;
 }
