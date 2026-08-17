@@ -6,7 +6,17 @@
 #include <iomanip>
 #include <algorithm>
 #include <filesystem>
+#include <functional>
 #include <time.h>
+
+#define CAN_FAIL(exp) do {                                              \
+        int a = exp;                                                    \
+        if(a) {                                                         \
+            printf("Failed with code %d at %s:%d\n",                    \
+                   a, __FILE__, __LINE__);                              \
+            exit(1);                                                    \
+        }                                                               \
+    } while(0);
 
 namespace fs = std::filesystem;
 
@@ -122,9 +132,10 @@ class MerkleTree {
                 printMerkleTree(child, depth+1);
             }
         } else{
-            std::cout << "->     " << pool[node].nodePath << " (File Hash: " << pool[node].hash << ")\n";
+            std::cout << "[FILE] " << pool[node].nodePath << " (File Hash: " << pool[node].hash << ")\n";
         }
     }
+
 };
 
 const std::string tempDirs[]  = {"dir1", "dir2", "dir3"};
@@ -163,12 +174,12 @@ int main(int argv, char** argc) {
     MerkleTree old;
     old.buildTree(tempDir);
     old.printMerkleTree(0);
-    for (auto& a : old.pool) {
-        for(int b : a.children) {
-            std::cout << " " << b;
-        }
-        std::cout << a.nodePath << "\n";
-    }
+    // for (auto& a : old.pool) {
+    //     for(int b : a.children) {
+    //         std::cout << " " << b;
+    //     }
+    //     std::cout << a.nodePath << "\n";
+    // }
     
     // while(true) {
     //     MerkleTree root;
@@ -181,9 +192,6 @@ int main(int argv, char** argc) {
     //     }
     //     old = root;
     // }
-
-    printf("Traversing directory tree\n");
-    // traverseDirectory(tempDir, 0);
 
     if(removeTempDir) {
         printf("Deleting temporary directories.\n");

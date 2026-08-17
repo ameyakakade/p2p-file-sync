@@ -35,9 +35,9 @@ int client() {
     int sfd;
 
     struct sockaddr_in addr = {0};
-	inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
-	addr.sin_family=AF_INET;
-	addr.sin_port = htons(6600);
+    inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+    addr.sin_family=AF_INET;
+    addr.sin_port = htons(6600);
 
     CAN_FAIL(!(sfd = socket(AF_INET, SOCK_STREAM, 0)));
     CAN_FAIL(connect(sfd, (struct sockaddr*)&addr, sizeof(addr)));
@@ -49,7 +49,7 @@ int client() {
     read(sfd, &arr, sizeof(arr));
     printf("Socket fd: %d\n", sfd);
     printf("Response: %s", arr);
-            
+
     return 0;
 }
 
