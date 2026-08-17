@@ -77,6 +77,26 @@ bool boolParser(Sp* sp) {
     if(a == "true") return true;
 }
 
+#define FIELD_PARSE(sp, keyword, parser)        \
+    keywordParser(sp, keyword);                \
+    charParser(sp, ':');                       \
+    parser                                      \
+    charParser(sp, ',');
+
+#define ARRAY_PARSE(sp, parser)                 \
+    charParser(sp, '[');                       \
+    while(gc(sp) != ']') {                     \
+        parser                                  \
+        charParser(sp, ',');                   \
+    }                                           \
+    charParser(sp, ']');
+
+#define OBJECT_PARSE(sp, parser)                \
+    eatSpaces(sp);                             \
+    charParser(sp, '{');                       \
+    parser                                      \
+    charParser(sp, '}');
+
 int main() {
     const char* a =
         "    {"
@@ -85,34 +105,42 @@ int main() {
         "        isDirectory : false,"
         "        hash        : 10103411384967783403,"
         "        children    : [2,4,5]"
+        "    }"
+        "    {"
+        "        index       : 8,"
+        "        nodePath    : \"dir/wow/this is very cool\","
+        "        isDirectory : true,"
+        "        hash        : 10777771384967783403,"
+        "        children    : []"
+        "    }"
+        "    {"
+        "        index       : 34,"
+        "        nodePath    : \"dfdsir/wow\","
+        "        isDirectory : false,"
+        "        hash        : 10103411384967783403,"
+        "        children    : [2,4,5]"
+        "    }"
+        "    {"
+        "        index       : 34,"
+        "        nodePath    : \"dir/wow\","
+        "        isDirectory : false,"
+        "        hash        : 10103411384967783403,"
+        "        children    : [2,4,5]"
         "    }";
     Sp sp = createSp(a);
-
-    eatSpaces(&sp);
-    charParser(&sp, '{');
-
-    keywordParser(&sp, "index");
-    charParser(&sp, ':');
-    std::cout << natParser(&sp) << "\n";
-    charParser(&sp, ',');
-
-    keywordParser(&sp, "nodePath");
-    charParser(&sp, ':');
-    std::cout << stringParser(&sp) << "\n";
-    charParser(&sp, ',');
-
-    keywordParser(&sp, "isDirectory");
-    charParser(&sp, ':');
-    std::cout << boolParser(&sp) << "\n";
-    charParser(&sp, ',');
-
-    keywordParser(&sp, "hash");
-    charParser(&sp, ':');
-    std::cout << natParser(&sp) << "\n";
-    charParser(&sp, ',');
-
-    keywordParser(&sp, "children");
-    charParser(&sp, ':');
-
-    printSp(&sp);
+    
+    while(gc(&sp) != '\0') {
+         OBJECT_PARSE(&sp,
+                     FIELD_PARSE(&sp, "index",      std::cout << natParser(&sp) << "\n";)
+                     FIELD_PARSE(&sp, "nodePath",   std::cout << stringParser(&sp) << "\n";)
+                     FIELD_PARSE(&sp, "isDirectory", std::cout << boolParser(&sp) << "\n";)
+                     FIELD_PARSE(&sp, "hash", std::cout << natParser(&sp) << "\n";)
+                     FIELD_PARSE(&sp, "children",
+                                 ARRAY_PARSE(&sp, std::cout << natParser(&sp) << " ";)
+                                 std::cout << "\n";
+                         )
+            )
+             printf("------\n");
+    }
+    // printSp(&sp);
 }

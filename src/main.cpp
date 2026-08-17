@@ -64,9 +64,9 @@ struct MerkleTreeNode {
 };
 
 enum class DiffType {
-    ADDED,      // Exists in Remote, missing locally
+    ADDED,      // Exists locally, missing remote
     MODIFIED,   // Content/hash mismatch
-    DELETED     // Exists locally, missing in Remote
+    DELETED    // Exists locally, missing in Remote
 };
 
 struct FileDifference {
@@ -211,32 +211,14 @@ public:
 
 int main() {
     fs::path localFolder = "test_local";
-    fs::path remoteFolder = "test_remote";
 
-    //mock local directory
-    fs::create_directories(localFolder / "docs");
-    fs::create_directories(localFolder / "photos");
-    {
-        std::ofstream(localFolder / "docs" / "report.txt") << "Local version of report";
-        std::ofstream(localFolder / "docs" / "notes.txt")  << "Shared notes text";
-        std::ofstream(localFolder / "photos" / "old.png")  << "Binary photo data";
-    }
-
-    //mock remote peer directory 
-    fs::create_directories(remoteFolder / "docs");
-    fs::create_directories(remoteFolder / "photos");
-    {
-        std::ofstream(remoteFolder / "docs" / "report.txt") << "Remote MODIFIED version"; // MODIFIED
-        std::ofstream(remoteFolder / "docs" / "notes.txt")  << "Shared notes text";        // SAME
-        std::ofstream(remoteFolder / "photos" / "new.jpg")  << "New photo uploaded";      // ADDED in remote
-        // photos/old.png is missing in remote                                             // DELETED
-    }
-    
     MerkleTree localTree;
     localTree.buildTree(localFolder);
 
+    std::string data = "";
+
     MerkleTree remoteTree;
-    remoteTree.buildTree(remoteFolder);
+    remoteTree.buildTreeString(data);
 
     std::cout << "Local Tree" << std::endl;
     localTree.printMerkleTree(0);
@@ -253,18 +235,18 @@ int main() {
         std::vector<FileDifference> diffs = MerkleTree::findDifferences(localTree, remoteTree);
         for (const auto& diff : diffs) {
             if (diff.type == DiffType::ADDED) {
-                std::cout << "[+] ADDED on Remote   : " << diff.relPath << " (Needs download)\n";
+                std::cout << "[+] ADDED on Remote    : " << diff.relPath << " (Needs download)\n";
             } else if (diff.type == DiffType::MODIFIED) {
-                std::cout << "[*] MODIFIED on Remote: " << diff.relPath << " (Needs update)\n";
+                std::cout << "[*] MODIFIED on Remote : " << diff.relPath << " (Needs update)\n";
             } else if (diff.type == DiffType::DELETED) {
-                std::cout << "[-] MISSING on Remote : " << diff.relPath << " (Local-only / deleted)\n";
+                std::cout << "[-] DELETED on Remote  : " << diff.relPath << " (Local-only / deleted)\n";
             }
         }
     }
 
     
-    fs::remove_all(localFolder);
-    fs::remove_all(remoteFolder);
+    // fs::remove_all(localFolder);
+    // fs::remove_all(remoteFolder);
 
     return 0;
 }
