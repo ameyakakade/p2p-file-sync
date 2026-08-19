@@ -2,6 +2,8 @@
 // Run "cc -o nob nob.c" using the available compiler,
 // then run "nob" executable to rebuild.
 
+// TODO: Try to get libs and cflags from sdl2-config instead of hardcoding
+
 #define NOB_IMPLEMENTATION
 // #define NOB_EXPERIMENTAL_DELETE_OLD -- Enable if works on windows
 #define BUILD_DIR "build/"
@@ -85,7 +87,20 @@ one:;
     nob_cmd_append(&cmd, "-Wl,-framework,Cocoa");
     // flags end
 #else
-    printf("linux peenux");
+    nob_cmd_append(&cmd, "c++", "-std=c++17", "-Wall", "-Wextra", "-o", BUILD_DIR"gui");
+    for(int i=0; i<sizeof(sources)/sizeof(char*); i++) {
+        nob_cmd_append(&cmd, sources[i]);
+    }
+    nob_cmd_append(&cmd, "-ggdb");
+    nob_cmd_append(&cmd, "-Ithirdparty/imgui");
+    nob_cmd_append(&cmd, "-Ithirdparty/imgui/backends/");
+    // hardcoded sdl2 flags
+    nob_cmd_append(&cmd, "-I/usr/include/SDL2");
+    nob_cmd_append(&cmd, "-D_GNU_SOURCE=1");
+    nob_cmd_append(&cmd, "-D_REENTRANT");
+    nob_cmd_append(&cmd, "-L/usr/lib");
+    nob_cmd_append(&cmd, "-lSDL2");
+    // flags end
 #endif
     RUN;
 ////// finished building
