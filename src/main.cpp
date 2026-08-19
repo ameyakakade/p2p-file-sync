@@ -337,16 +337,16 @@ int runClient(const fs::path& localFolder) {
                         std::cout << "[-] DELETED on Remote  : " << diff.nodePath << " (Local-only / deleted)\n";
                     }
                 }
-            } else {
-                std::cout << "[✓] Folders are in sync.\n";
-            }
+            } //else {
+                //std::cout << "[✓] Folders are in sync.\n";
+            //}
         }
         free(buf);
 
 #ifdef _WIN32
-        usleep(1000*200);
+        Sleep(10000); // 10 seconds
 #else
-        Sleep(200);
+        usleep(1000*200);
 #endif /* _WIN32 */
 
     }
