@@ -9,14 +9,17 @@
 #include "thirdparty/nob.h"
 #include <string.h>
 
-#define RUN do {                                    \
-    if (cmd.count) {                                \
-        if (!nob_cmd_run(&cmd)) return 1;           \
-        cmd = (Nob_Cmd){0};                         \
-    } else {                                        \
-        nob_log(NOB_INFO, "No commands to run.");   \
-    }                                               \
-} while(0)
+#define RUN do {                                                        \
+        if (cmd.count) {                                                \
+            if (!nob_cmd_run(&cmd)) {                                   \
+                nob_log(NOB_ERROR, "Failed to run command");            \
+                ret = 1;                                                \
+            }                                                           \
+            cmd = (Nob_Cmd){0};                                         \
+        } else {                                                        \
+            nob_log(NOB_INFO, "No commands to run.");                   \
+        }                                                               \
+    } while(0)
 
 #ifdef _WIN32
 #define EXT ".exe"
@@ -28,6 +31,7 @@ int main(int argc, char **argv)
 {
     bool autorun = false;
     bool rebuild = false;
+    int ret = 0;
     for (int i=0; i<argc; i++) {
         if (!strcmp(argv[i], "run")) autorun = true;
         if (!strcmp(argv[i], "rebuild")) rebuild = true;
@@ -57,9 +61,10 @@ int main(int argc, char **argv)
 #ifdef _WIN32
         nob_cmd_append(&cmd, "cl", "-o", BUILD_DIR"server");
         nob_cmd_append(&cmd, "server/main.cpp");
-#else
-        // do nothing for now
-#endif /* win32 */
+        #else
+        nob_cmd_append(&cmd, "c++", "-Wall", "-Wextra", "-o", BUILD_DIR"server");
+        nob_cmd_append(&cmd, "server/main.cpp");
+        #endif /* win32 */
     }
 
     RUN;
@@ -70,7 +75,8 @@ int main(int argc, char **argv)
         nob_cmd_append(&cmd, "cl", "-o", BUILD_DIR"client");
         nob_cmd_append(&cmd, "client/main.cpp");
         #else
-        // do nothing for now
+        nob_cmd_append(&cmd, "c++", "-Wall", "-Wextra", "-o", BUILD_DIR"client");
+        nob_cmd_append(&cmd, "client/main.cpp");
         #endif /* win32 */
     }
 
@@ -82,5 +88,5 @@ int main(int argc, char **argv)
         if (!nob_cmd_run(&cmd)) return 1;
     }
  
-    return 0;
+    return ret;
 }
