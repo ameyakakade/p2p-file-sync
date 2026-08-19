@@ -344,9 +344,9 @@ int runClient(const fs::path& localFolder) {
         free(buf);
 
 #ifdef _WIN32
-        usleep(1000*200);
-#else
         Sleep(200);
+#else
+        usleep(1000*200);
 #endif /* _WIN32 */
 
     }

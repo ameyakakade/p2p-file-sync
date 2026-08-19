@@ -9,6 +9,12 @@
 #include "thirdparty/nob.h"
 #include <string.h>
 
+#ifdef _WIN32
+#define EXT ".exe"
+#else
+#define EXT ""
+#endif /* win32 */
+
 #define RUN do {                                    \
     if (cmd.count) {                                \
         if (!nob_cmd_run(&cmd)) return 1;           \
@@ -16,69 +22,74 @@
     } else {                                        \
         nob_log(NOB_INFO, "No commands to run.");   \
     }                                               \
+    if (singleTarget) goto end;                     \
 } while(0)
 
-#ifdef _WIN32
-#define EXT ".exe"
-#else
-#define EXT ""
-#endif /* win32 */
+#define IMGUI "thirdparty/imgui/"
 
 int main(int argc, char **argv)
 {
-    bool autorun = false;
-    bool rebuild = false;
-    for (int i=0; i<argc; i++) {
-        if (!strcmp(argv[i], "run")) autorun = true;
-        if (!strcmp(argv[i], "rebuild")) rebuild = true;
-    }
-
     NOB_GO_REBUILD_URSELF(argc, argv);
     nob_mkdir_if_not_exists(BUILD_DIR);
     Nob_Cmd cmd = {0};
-
-    // building main.cpp
-    if (nob_needs_rebuild1(BUILD_DIR"main"EXT, "src/main.cpp") || rebuild) {
-        #ifdef _WIN32
-        // do nothing for now
-        #else
-        nob_cmd_append(&cmd, "c++", "-std=c++17", "-Wall", "-Wextra", "-o", BUILD_DIR"main");
-        nob_cmd_append(&cmd, "src/main.cpp");
-        nob_cmd_append(&cmd, "-ggdb");
-        #endif /* win32 */
+    int a = 0;
+    bool singleTarget = false;
+    if(argc > 1) {
+        a = argv[1][0] - '0';
+        singleTarget = true;
+        switch(a) {
+        case 0: goto zero;
+        case 1: goto one;
+        }
     }
 
+////// building main.cpp
+zero:;
+#ifdef _WIN32
+    // do nothing for now
+#else
+    nob_cmd_append(&cmd, "c++", "-std=c++17", "-Wall", "-Wextra", "-o", BUILD_DIR"main");
+    nob_cmd_append(&cmd, "src/main.cpp");
+    nob_cmd_append(&cmd, "-ggdb");
+#endif /* win32 */
     RUN;
+////// finished building
 
-    //building server
-    if (nob_needs_rebuild1(BUILD_DIR"server"EXT, "server/main.cpp") || rebuild) {
-        #ifdef _WIN32
-        nob_cmd_append(&cmd, "cl", "-o", BUILD_DIR"server");
-        nob_cmd_append(&cmd, "server/main.cpp");
-        #else
-        // do nothing for now
-        #endif /* win32 */
+////// building gui
+one:;
+    char* sources[] = { IMGUI"imgui.cpp"
+                      , IMGUI"imgui_demo.cpp"
+                      , IMGUI"imgui_draw.cpp"
+                      , IMGUI"imgui_tables.cpp"
+                      , IMGUI"imgui_widgets.cpp"
+                      , IMGUI"backends/imgui_impl_sdl2.cpp"
+                      , IMGUI"backends/imgui_impl_sdlrenderer2.cpp"
+                      , "src/gui.cpp"
+                      };
+#ifdef _WIN32
+    // nothing
+#elif __APPLE__
+    nob_cmd_append(&cmd, "c++", "-std=c++17", "-Wall", "-Wextra", "-o", BUILD_DIR"gui");
+    for(int i=0; i<sizeof(sources)/sizeof(char*); i++) {
+        nob_cmd_append(&cmd, sources[i]);
     }
-
+    nob_cmd_append(&cmd, "-ggdb");
+    nob_cmd_append(&cmd, "-Ithirdparty/imgui");
+    nob_cmd_append(&cmd, "-Ithirdparty/imgui/backends/");
+    // hardcoded sdl2 flags
+    nob_cmd_append(&cmd, "-I/opt/homebrew/include/SDL2");
+    nob_cmd_append(&cmd, "-D_THREAD_SAFE");
+    nob_cmd_append(&cmd, "-L/opt/homebrew/lib");
+    nob_cmd_append(&cmd, "-lSDL2main");
+    nob_cmd_append(&cmd, "-lSDL2");
+    nob_cmd_append(&cmd, "-Wl,-framework,Cocoa");
+    // flags end
+#else
+    printf("linux peenux");
+#endif
     RUN;
+////// finished building
 
-    //building client
-    if (nob_needs_rebuild1(BUILD_DIR"client"EXT, "client/main.cpp") || rebuild) {
-        #ifdef _WIN32
-        nob_cmd_append(&cmd, "cl", "-o", BUILD_DIR"client");
-        nob_cmd_append(&cmd, "client/main.cpp");
-        #else
-        // do nothing for now
-        #endif /* win32 */
-    }
-
-    RUN;
-
-    if (autorun) {
-        cmd = (Nob_Cmd){0};
-        nob_cmd_append(&cmd, "./build/main");
-        if (!nob_cmd_run(&cmd)) return 1;
-    }
- 
+end:;
     return 0;
 }
