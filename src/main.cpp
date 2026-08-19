@@ -337,9 +337,9 @@ int runClient(const fs::path& localFolder) {
                         std::cout << "[-] DELETED on Remote  : " << diff.nodePath << " (Local-only / deleted)\n";
                     }
                 }
-            } else {
-                std::cout << "[✓] Folders are in sync.\n";
-            }
+            } //else {
+                //std::cout << "[✓] Folders are in sync.\n";
+            //}
         }
         free(buf);
 
