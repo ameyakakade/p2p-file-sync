@@ -179,7 +179,7 @@ public:
     std::string dumpTreeString() {
         std::ostringstream os;
         os << "poolSize:" << pool.size();
-        for(int i=0; i<pool.size(); i++) {
+        for(int i=0; (size_t)i<pool.size(); i++) {
         os << "{";
             os << "index:" << i << ",";
             os << "nodePath:" << pool[i].nodePath << ",";
@@ -273,7 +273,7 @@ public:
 
 };
 
-int receiveOverSocket(char* buf, int buflen, int port, char* ip) {
+int receiveOverSocket(char* buf, int buflen, int port, const char* ip) {
 #ifdef _WIN32
     WSADATA wsaData;
     WSAStartup(MAKEWORD(2, 2), &wsaData);
@@ -293,8 +293,10 @@ int receiveOverSocket(char* buf, int buflen, int port, char* ip) {
         WSACleanup();
 #endif
         a = -1;
+        printf("%d", errno);
     } else {
         a = recv(client_socket, buf, buflen, 0);
+    }
 
 #ifdef _WIN32
         closesocket(client_socket);
@@ -302,7 +304,6 @@ int receiveOverSocket(char* buf, int buflen, int port, char* ip) {
 #else
         close(client_socket);
 #endif /* _WIN32 */
-    }
     return a;
 }
 
@@ -316,7 +317,7 @@ int main(int argc, char** argv) {
         MerkleTree remoteTree;
         char* buf = (char*)malloc(1024*8);
         memset(buf, 0, 1024*8);
-        int err = receiveOverSocket(buf, 1024*8, 8080, "127.0.0.1");
+        int err = receiveOverSocket(buf, 1024*8, 8080, "10.227.167.87");
         if (err != -1){
             remoteTree.buildTreeString(buf);
 
@@ -380,7 +381,6 @@ int mains(int argc, char** argv) {
         std::string l = localTree.dumpTreeString();
 
         std::cout << "Server sending \n";
-        int clientsCount = 0;
 
         sockaddr_in client_addr;
         int client_size = sizeof(client_addr);

@@ -20,7 +20,7 @@ Sp createSp(const char* s) {
 
 void printSp(Sp* sp) {
     const char* sn = sp->string + sp->loc;
-    printf(sn);
+    printf("%s", sn);
 }
 
 void eatSpaces(Sp* sp) {
@@ -71,7 +71,7 @@ std::string stringParser(Sp* sp) {
 bool boolParser(Sp* sp) {
     eatSpaces(sp);
     std::string a;
-    while(gc(sp) != ',') {
+    while('a' <= gc(sp) && gc(sp) <= 'z' && gc(sp) != '\0') {
         a += gc(sp);
         sp->loc = sp->loc + 1;
     }
