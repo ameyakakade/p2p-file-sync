@@ -8,12 +8,12 @@
 #include <filesystem>
 #include <unordered_map>
 #include <cstdint>
-
 #include "parser.h"
 
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <windows.h>
 #else
 #include <netdb.h>
 #include <arpa/inet.h>
@@ -98,7 +98,7 @@ struct FileDifference {
 };
 
 class MerkleTree {
-public:
+  public:
     std::vector<MerkleTreeNode> pool;
 
     void clear() {
@@ -160,7 +160,7 @@ public:
         Sp sp = createSp(a);
 
         FIELD_PARSE(&sp, "poolSize", pool.resize(natParser(&sp));)
-        while(gc(&sp) != '\0') {
+            while(gc(&sp) != '\0') {
                 OBJECT_PARSE(&sp,
                              int i = 0;
                              MerkleTreeNode curr;
@@ -173,14 +173,14 @@ public:
                                  )
                              pool[i] = curr;
                     )
-        }
+                    }
     }
 
     std::string dumpTreeString() {
         std::ostringstream os;
         os << "poolSize:" << pool.size();
         for(int i=0; (size_t)i<pool.size(); i++) {
-        os << "{";
+            os << "{";
             os << "index:" << i << ",";
             os << "nodePath:" << pool[i].nodePath << ",";
             os << "isDirectory:" << (pool[i].isDirectory ? "true" : "false") << ",";
@@ -190,7 +190,7 @@ public:
                 os << child << ",";
             }
             os << "]";
-        os << "}";
+            os << "}";
         }
         return os.str();
     }
@@ -293,10 +293,8 @@ int receiveOverSocket(char* buf, int buflen, int port, const char* ip) {
         WSACleanup();
 #endif
         a = -1;
-        printf("%d", errno);
     } else {
         a = recv(client_socket, buf, buflen, 0);
-    }
 
 #ifdef _WIN32
         closesocket(client_socket);
@@ -304,35 +302,31 @@ int receiveOverSocket(char* buf, int buflen, int port, const char* ip) {
 #else
         close(client_socket);
 #endif /* _WIN32 */
+    }
     return a;
 }
-
-int main(int argc, char** argv) {
-    std::string b = argv[1];
-    fs::path localFolder = b;
+int runClient(const fs::path& localFolder) {
     while (true) {
         MerkleTree localTree;
         localTree.buildTree(localFolder);
 
         MerkleTree remoteTree;
-        char* buf = (char*)malloc(1024*8);
-        memset(buf, 0, 1024*8);
-        int err = receiveOverSocket(buf, 1024*8, 8080, "10.227.167.87");
-        if (err != -1){
+        char* buf = (char*)malloc(1024 * 8);
+        memset(buf, 0, 1024 * 8);
+        
+        int err = receiveOverSocket(buf, 1024 * 8, 8080, "127.0.0.1");
+        if (err != -1) {
             remoteTree.buildTreeString(buf);
 
-            if (localTree.checkIfEqual(remoteTree)) {
-        
-            } else {
- 
-                std::cout << "Local Tree" << std::endl;
+            if (!localTree.checkIfEqual(remoteTree)) {
+                std::cout << "\n=== Local Tree ===\n";
                 localTree.printMerkleTree(0);
 
-                std::cout << "\nRemote Tree" << std::endl;
+                std::cout << "\n=== Remote Tree ===\n";
                 remoteTree.printMerkleTree(0);
 
-                std::cout << "Root mismatch detected!\n\n";
-        
+                std::cout << "\n[!] Root mismatch detected!\n";
+
                 std::vector<FileDifference> diffs = MerkleTree::findDifferences(localTree, remoteTree);
                 for (const auto& diff : diffs) {
                     if (diff.type == DiffType::ADDED) {
@@ -343,44 +337,48 @@ int main(int argc, char** argv) {
                         std::cout << "[-] DELETED on Remote  : " << diff.nodePath << " (Local-only / deleted)\n";
                     }
                 }
+            } else {
+                std::cout << "[✓] Folders are in sync.\n";
             }
         }
-        sleep(1);
-    }
-    // fs::remove_all(localFolder);
-    // fs::remove_all(remoteFolder);
+        free(buf);
 
+#ifdef _WIN32
+        usleep(1000*200);
+#else
+        Sleep(200);
+#endif /* _WIN32 */
+
+    }
     return 0;
 }
 
-int mains(int argc, char** argv) {
-    std::string b = argv[1];
-    fs::path localFolder = b;
+int runServer(const fs::path& localFolder) {
     MerkleTree localTree;
 
 #ifdef _WIN32
-        WSADATA wsaData;
-        if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-            std::cerr << "WSAStartup failed.\n";
-            return 1;
-        }
-#endif /* win32 */
+    WSADATA wsaData;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        std::cerr << "WSAStartup failed.\n";
+        return 1;
+    }
+#endif
 
-        SOCK server_socket = socket(AF_INET, SOCK_STREAM, 0);
-        sockaddr_in server_addr{};
-        server_addr.sin_family = AF_INET;
-        server_addr.sin_addr.s_addr = INADDR_ANY;
-        server_addr.sin_port = htons(8080);
+    SOCK server_socket = socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in server_addr{};
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(8080);
 
-        bind(server_socket, (sockaddr*)&server_addr, sizeof(server_addr));
-        listen(server_socket, 5);
+    bind(server_socket, (sockaddr*)&server_addr, sizeof(server_addr));
+    listen(server_socket, 5);
 
-    while(true) {
+    std::cout << "Server listening on port 8080 for folder: " << localFolder << "\n";
+
+    while (true) {
         localTree.clear();
         localTree.buildTree(localFolder);
-        std::string l = localTree.dumpTreeString();
-
-        std::cout << "Server sending \n";
+        std::string serializedTree = localTree.dumpTreeString();
 
         sockaddr_in client_addr;
         int client_size = sizeof(client_addr);
@@ -389,18 +387,49 @@ int mains(int argc, char** argv) {
         SOCK client_socket = accept(server_socket, (sockaddr*)&client_addr, &client_size);
 #else
         SOCK client_socket = accept(server_socket, (sockaddr*)&client_addr, (socklen_t*)&client_size);
-#endif /* win32 */
+#endif
 
-        send(client_socket, l.c_str(), l.size(), 0);
+        if (client_socket != INV_SOCK) {
+            std::cout << "Client connected, sending tree state...\n";
+            send(client_socket, serializedTree.c_str(), static_cast<int>(serializedTree.size()), 0);
 
 #ifdef _WIN32
-        closesocket(client_socket);
-        WSACleanup();
+            closesocket(client_socket);
 #else
-        close(client_socket);
-#endif /* _WIN32 */
+            close(client_socket);
+#endif
+        }
     }
+
+#ifdef _WIN32
+    WSACleanup();
+#endif
     return 0;
 }
 
+int main(int argc, char** argv) {
+    if (argc < 3) {
+        std::cerr << "Usage:\n";
+        std::cerr << "  Server: " << argv[0] << " --server <path_to_folder>\n";
+        std::cerr << "  Client: " << argv[0] << " --client <path_to_folder>\n";
+        return 1;
+    }
 
+    std::string mode = argv[1];
+    fs::path targetFolder = argv[2];
+
+    if (!fs::exists(targetFolder)) {
+        std::cerr << "Error: Directory does not exist -> " << targetFolder << "\n";
+        return 1;
+    }
+
+    if (mode == "--server" || mode == "-s") {
+        return runServer(targetFolder);
+    } else if (mode == "--client" || mode == "-c") {
+        return runClient(targetFolder);
+    } else {
+        std::cerr << "Unknown mode: " << mode << "\n";
+        std::cerr << "Use --server or --client\n";
+        return 1;
+    }
+}
