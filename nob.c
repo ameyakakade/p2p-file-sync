@@ -48,7 +48,10 @@ int main(int argc, char **argv)
 ////// building main.cpp
 zero:;
 #ifdef _WIN32
-    // do nothing for now
+    nob_cmd_append(&cmd, "cl", "/std:c++20", "/EHsc", "Ws2_32.lib");
+    nob_cmd_append(&cmd, "/Febuild/main.exe");
+    nob_cmd_append(&cmd, "/Fobuild/");
+    nob_cmd_append(&cmd, "src/main.cpp");
 #else
     nob_cmd_append(&cmd, "c++", "-std=c++17", "-Wall", "-Wextra", "-o", BUILD_DIR"main");
     nob_cmd_append(&cmd, "src/main.cpp");
@@ -69,7 +72,29 @@ one:;
                       , "src/gui.cpp"
                       };
 #ifdef _WIN32
-    // nothing
+    nob_cmd_append(&cmd, "cl", "/std:c++20", "/EHsc", "Ws2_32.lib");
+    nob_cmd_append(&cmd, "/Febuild/gui.exe");
+    nob_cmd_append(&cmd, "/Fobuild/");
+    for(int i=0; i<sizeof(sources)/sizeof(char*); i++) {
+        nob_cmd_append(&cmd, sources[i]);
+    }
+    nob_cmd_append(&cmd, "/Ithirdparty/imgui");
+    nob_cmd_append(&cmd, "/Ithirdparty/imgui/backends/");
+    nob_cmd_append(&cmd, "/Ithirdparty/imgui/sdl2_win/include");
+    nob_cmd_append(&cmd, "/MD");
+    nob_cmd_append(&cmd, "/Zi");
+    nob_cmd_append(&cmd, "/link");
+    nob_cmd_append(&cmd, "SDL2.lib");
+    nob_cmd_append(&cmd, "SDL2main.lib");
+    nob_cmd_append(&cmd, "/subsystem:console");
+#ifdef _WIN64
+    nob_cmd_append(&cmd, "/LIBPATH:thirdparty/imgui/sdl2_win/lib/x64");
+    if (!nob_copy_directory_recursively("thirdparty/imgui/sdl2_win/lib/x64", "build")) return -1;
+#else
+    nob_cmd_append(&cmd, "/LIBPATH:thirdparty/imgui/sdl2_win/lib/x86");
+    if (!nob_copy_directory_recursively("thirdparty/imgui/sdl2_win/lib/x86", "build")) return -1;
+#endif /* win64 */
+
 #elif __APPLE__
     nob_cmd_append(&cmd, "c++", "-std=c++17", "-Wall", "-Wextra", "-o", BUILD_DIR"gui");
     for(int i=0; i<sizeof(sources)/sizeof(char*); i++) {
@@ -86,6 +111,7 @@ one:;
     nob_cmd_append(&cmd, "-lSDL2");
     nob_cmd_append(&cmd, "-Wl,-framework,Cocoa");
     // flags end
+
 #else
     nob_cmd_append(&cmd, "c++", "-std=c++17", "-Wall", "-Wextra", "-o", BUILD_DIR"gui");
     for(int i=0; i<sizeof(sources)/sizeof(char*); i++) {
