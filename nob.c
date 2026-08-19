@@ -42,20 +42,23 @@ int main(int argc, char **argv)
     Nob_Cmd cmd = {0};
 
     // building main.cpp
-    if (false && nob_needs_rebuild1(BUILD_DIR"main"EXT, "src/main.cpp") || rebuild) {
-        #ifdef _WIN32
+    if (nob_needs_rebuild1(BUILD_DIR"main"EXT, "src/main.cpp") || rebuild) {
+#ifdef _WIN32
         // do nothing for now
-        #else
+#else
         nob_cmd_append(&cmd, "c++", "-Wall", "-Wextra", "-o", BUILD_DIR"main");
         nob_cmd_append(&cmd, "src/main.cpp");
-        #endif /* win32 */
+        nob_cmd_append(&cmd, "-Ithirdparty/openssl-4.0.1/include/");
+        nob_cmd_append(&cmd, "thirdparty/openssl-4.0.1/libssl.a");
+        nob_cmd_append(&cmd, "thirdparty/openssl-4.0.1/libcrypto.a");
+#endif /* win32 */
     }
 
     RUN;
 
     //building server
-    if (nob_needs_rebuild1(BUILD_DIR"server"EXT, "server/main.cpp") || rebulid) {
-        #ifdef _WIN32
+    if (nob_needs_rebuild1(BUILD_DIR"server"EXT, "server/main.cpp") || rebuild) {
+#ifdef _WIN32
         nob_cmd_append(&cmd, "cl", "-o", BUILD_DIR"server");
         nob_cmd_append(&cmd, "server/main.cpp");
         #else
