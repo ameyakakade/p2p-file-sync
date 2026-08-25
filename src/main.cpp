@@ -473,10 +473,11 @@ int runClient(const fs::path& localFolder) {
             }
         }
 
+        // Checking every 5 seconds
         #ifdef _WIN32
             Sleep(5000);
         #else
-            usleep(5000);
+            usleep(5000*1000);
         #endif
     }
 
@@ -509,10 +510,6 @@ int runServer(const fs::path& localFolder) {
     std::cout << "Server listening on port 8080 for folder: " << localFolder << "\n";
 
     while (true) {
-        // localTree.clear();
-        // localTree.buildTree(localFolder);
-        // std::string serializedTree = localTree.dumpTreeString();
-
         sockaddr_in client_addr;
         int client_size = sizeof(client_addr);
 
