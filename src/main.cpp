@@ -305,51 +305,184 @@ int receiveOverSocket(char* buf, int buflen, int port, const char* ip) {
     }
     return a;
 }
+bool sendAll(SOCK sock, const char* buffer, size_t length){
+    size_t totalSent = 0;
+    while(totalSent < length){
+        int sent = send(sock, buffer + totalSent, static_cast<int>(length-totalSent), 0);
+        if(sent==0 || sent==ERR_SOCK){
+            return false;
+        }
+        totalSent+=(sent);
+    }
+    return true;
+}
+bool recvAll(SOCK sock, char* buffer, size_t length){
+    size_t totalRecd = 0;
+    while(totalRecd < length){
+        int recd = recv(sock, buffer + totalRecd, static_cast<int>(length-totalRecd), 0);
+        if(recd==0 || recd==ERR_SOCK){
+            return false;
+        }
+        totalRecd+=(recd);
+    }
+    return true;
+}
+
+bool sendFileOverSocket(SOCK client, const fs::path& fullPath){
+    std::ifstream file(fullPath, std::ios::binary | std::ios::ate);
+    if(!file.is_open()){
+        uint64_t errSize = 0;
+        sendAll(client, reinterpret_cast<char*>(&errSize), sizeof(errSize));
+        return false;
+    }
+    uint64_t fileSize = file.tellg();
+    file.seekg(0, std::ios::beg);
+    if(!sendAll(client, reinterpret_cast<char*>(&fileSize), sizeof(fileSize))){
+        return false;
+    }
+    const size_t bufferSize = 65536; //64KB
+    std::vector<char>buffer(bufferSize);
+    while(fileSize > 0){
+        size_t toRead = (std::min)(static_cast<uint64_t>(bufferSize), fileSize);
+        file.read(buffer.data(), toRead);
+        if(!sendAll(client, buffer.data(), toRead)){
+            return false;
+        }
+        fileSize-=toRead;
+    }
+    return true;
+}
+bool downloadFile(const std::string& relativePath, const fs::path& localBaseFolder, int port, const char* ip){
+    SOCK clientSocket = socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in server_addr{};
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+    inet_pton(AF_INET, ip, &server_addr.sin_addr);
+
+    if(connect(clientSocket, (sockaddr*)& server_addr, sizeof(server_addr)) == ERR_SOCK){
+        #ifdef _WIN32
+            closesocket(clientSocket);
+        #else
+            close(clientSocket);
+        #endif
+            return false;
+    }
+    std::string command = "GET_FILE " + relativePath;
+    send(clientSocket, command.c_str(), static_cast<int>(command.size()), 0);
+    uint64_t fileSize = 0;
+    if(!recvAll(clientSocket, reinterpret_cast<char*>(&fileSize), sizeof(fileSize)) || fileSize==0  ){
+        #ifdef _WIN32
+            closesocket(clientSocket);
+        #else   
+            close(clientSocket);
+        #endif
+            return false;
+    }
+
+    fs::path targetPath = localBaseFolder / relativePath;
+    fs::create_directories(targetPath.parent_path());
+    std::ofstream outFile(targetPath, std::ios::binary);
+    if(!outFile.is_open()){
+        #ifdef _WIN32
+            closesocket(clientSocket);
+        #else   
+            close(clientSocket);
+        #endif
+            return false;
+    }
+    const size_t bufferSize = 65536;
+    std::vector<char>buffer(bufferSize);
+    uint64_t remaining = fileSize;
+    while(remaining > 0){
+        size_t toRecv = (std::min)(remaining, static_cast<uint64_t>(bufferSize));
+        if(!recvAll(clientSocket, buffer.data(), toRecv)){
+            outFile.close();
+            #ifdef _WIN32
+                closesocket(clientSocket);
+            #else   
+                close(clientSocket);
+            #endif
+                return false;
+        }
+        outFile.write(buffer.data(), toRecv);
+        remaining-=toRecv;
+    }
+    outFile.close();
+    #ifdef _WIN32
+        closesocket(clientSocket);
+    #else   
+        close(clientSocket);
+    #endif
+        return true;
+}
 int runClient(const fs::path& localFolder) {
+#ifdef _WIN32
+    WSADATA wsaData;
+    WSAStartup(MAKEWORD(2, 2), &wsaData);
+#endif
+
     while (true) {
         MerkleTree localTree;
         localTree.buildTree(localFolder);
 
-        MerkleTree remoteTree;
-        char* buf = (char*)malloc(1024 * 8);
-        memset(buf, 0, 1024 * 8);
-        
-        int err = receiveOverSocket(buf, 1024 * 8, 8080, "127.0.0.1");
-        if (err != -1) {
-            remoteTree.buildTreeString(buf);
+        // Step 1: Request Merkle Tree from server
+        SOCK client_socket = socket(AF_INET, SOCK_STREAM, 0);
+        sockaddr_in server_addr{};
+        server_addr.sin_family = AF_INET;
+        server_addr.sin_port = htons(8080);
+        inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr);
 
-            if (!localTree.checkIfEqual(remoteTree)) {
-                std::cout << "\n=== Local Tree ===\n";
-                localTree.printMerkleTree(0);
+        if (connect(client_socket, (sockaddr*)&server_addr, sizeof(server_addr)) != ERR_SOCK) {
+            std::string req = "GET_TREE";
+            send(client_socket, req.c_str(), static_cast<int>(req.size()), 0);
 
-                std::cout << "\n=== Remote Tree ===\n";
-                remoteTree.printMerkleTree(0);
-
-                std::cout << "\n[!] Root mismatch detected!\n";
-
-                std::vector<FileDifference> diffs = MerkleTree::findDifferences(localTree, remoteTree);
-                for (const auto& diff : diffs) {
-                    if (diff.type == DiffType::ADDED) {
-                        std::cout << "[+] ADDED on Remote    : " << diff.nodePath << " (Needs download)\n";
-                    } else if (diff.type == DiffType::MODIFIED) {
-                        std::cout << "[*] MODIFIED on Remote : " << diff.nodePath << " (Needs update)\n";
-                    } else if (diff.type == DiffType::DELETED) {
-                        std::cout << "[-] DELETED on Remote  : " << diff.nodePath << " (Local-only / deleted)\n";
-                    }
-                }
-            } //else {
-                //std::cout << "[✓] Folders are in sync.\n";
-            //}
-        }
-        free(buf);
+            std::vector<char> treeBuf(1024 * 64, 0);
+            int r = recv(client_socket, treeBuf.data(), static_cast<int>(treeBuf.size()) - 1, 0);
 
 #ifdef _WIN32
-        Sleep(200);
+            closesocket(client_socket);
 #else
-        usleep(1000*200);
-#endif /* _WIN32 */
+            close(client_socket);
+#endif
 
+            if (r > 0) {
+                MerkleTree remoteTree;
+                remoteTree.buildTreeString(treeBuf.data());
+
+                if (!localTree.checkIfEqual(remoteTree)) {
+                    std::cout << "\n[!] Sync discrepancy detected. Resolving...\n";
+
+                    std::vector<FileDifference> diffs = MerkleTree::findDifferences(localTree, remoteTree);
+
+                    for (const auto& diff : diffs) {
+                        fs::path targetFilePath = localFolder / diff.nodePath;
+
+                        if (diff.type == DiffType::ADDED || diff.type == DiffType::MODIFIED) {
+                            std::cout << "[↓] Downloading: " << diff.nodePath << "\n";
+                            downloadFile(diff.nodePath, localFolder, 8080, "127.0.0.1");
+                        } else if (diff.type == DiffType::DELETED) {
+                            std::cout << "[✕] Deleting local: " << diff.nodePath << "\n";
+                            std::error_code ec;
+                            fs::remove_all(targetFilePath, ec);
+                        }
+                    }
+                    std::cout << "[✓] Sync complete.\n";
+                } else {
+                    std::cout << "[✓] Local folder is up-to-date.\n";
+                }
+            }
+        }
+
+        #ifdef _WIN32
+            Sleep(5000);
+        #else
+            usleep(5000);
+        #endif
     }
+
+#ifdef _WIN32
+    WSACleanup();
+#endif
     return 0;
 }
 
@@ -376,9 +509,9 @@ int runServer(const fs::path& localFolder) {
     std::cout << "Server listening on port 8080 for folder: " << localFolder << "\n";
 
     while (true) {
-        localTree.clear();
-        localTree.buildTree(localFolder);
-        std::string serializedTree = localTree.dumpTreeString();
+        // localTree.clear();
+        // localTree.buildTree(localFolder);
+        // std::string serializedTree = localTree.dumpTreeString();
 
         sockaddr_in client_addr;
         int client_size = sizeof(client_addr);
@@ -388,17 +521,28 @@ int runServer(const fs::path& localFolder) {
 #else
         SOCK client_socket = accept(server_socket, (sockaddr*)&client_addr, (socklen_t*)&client_size);
 #endif
-
-        if (client_socket != INV_SOCK) {
-            std::cout << "Client connected, sending tree state...\n";
-            send(client_socket, serializedTree.c_str(), static_cast<int>(serializedTree.size()), 0);
-
-#ifdef _WIN32
-            closesocket(client_socket);
-#else
-            close(client_socket);
-#endif
+        if(client_socket==INV_SOCK){continue;}
+        char reqBuff[1024] = {0};
+        int bytesRead = recv(client_socket, reqBuff, sizeof(reqBuff), 0);
+        if(bytesRead > 0){ // means there is a request by the client
+            std::string request(reqBuff, bytesRead);
+            if(request=="GET_TREE"){ // send the merkle tree
+                localTree.clear();
+                localTree.buildTree(localFolder);
+                std::string serialisedTree = localTree.dumpTreeString();
+                sendAll(client_socket, serialisedTree.c_str(), serialisedTree.size());
+            } else if(request.substr(0, 9) == "GET_FILE "){ // send the file
+                std::string relativePath = request.substr(9);
+                fs::path fullPath = localFolder / relativePath;
+                std::cout << "Sending File: " << relativePath << "\n";
+                sendFileOverSocket(client_socket, fullPath);
+            }
         }
+        #ifdef _WIN32
+            closesocket(client_socket);
+        #else   
+            close(client_socket);
+        #endif
     }
 
 #ifdef _WIN32
