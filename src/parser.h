@@ -15,7 +15,7 @@ char gc(Sp* sp) {
 }
 
 Sp createSp(const char* s) {
-    return {.string = s, .loc = 0};
+    return {s, 0};
 }
 
 void printSp(Sp* sp) {
