@@ -95,6 +95,7 @@ enum class DiffType {
 struct FileDifference {
     std::string nodePath;
     DiffType    type;
+    bool isDirectory;
 };
 
 class MerkleTree {
@@ -221,7 +222,22 @@ class MerkleTree {
                       << node.hash << std::dec << ")\n";
         }
     }
-    
+    static void collectAll(const MerkleTree& tree, int idx, DiffType type, std::vector<FileDifference>& diffs){
+        if(idx<0 || idx>=static_cast<int>(tree.pool.size())){
+            return;
+        }
+        const auto node = tree.pool[idx];
+        diffs.push_back({
+            node.nodePath.generic_string(),
+            type,
+            node.isDirectory
+        });
+        if(node.isDirectory){
+            for(int childidx : node.children){
+                collectAll(tree, childidx, type, diffs);
+            }
+        }
+    }
     static void compareNodes(const MerkleTree& localTree, int localIdx,
                              const MerkleTree& remoteTree, int remoteIdx,
                              std::vector<FileDifference>& diffs) {
@@ -233,7 +249,7 @@ class MerkleTree {
 
         // Leaf file comparison
         if (!lNode.isDirectory && !rNode.isDirectory) {
-            diffs.push_back({lNode.nodePath.generic_string(), DiffType::MODIFIED});
+            diffs.push_back({lNode.nodePath.generic_string(), DiffType::MODIFIED, false});
             return;
         }
 
@@ -250,7 +266,7 @@ class MerkleTree {
 
             if (it == remoteChildrenMap.end()) {
                 // Present locally but absent in remote
-                diffs.push_back({lPath, DiffType::DELETED});
+                collectAll(localTree, lChild, DiffType::DELETED, diffs);
             } else {
                 // Present in both : dive deeper into children
                 compareNodes(localTree, lChild, remoteTree, it->second, diffs);
@@ -260,7 +276,7 @@ class MerkleTree {
 
         // Any remaining items in remoteChildrenMap exist only in remote
         for (const auto& [rPath, rChild] : remoteChildrenMap) {
-            diffs.push_back({rPath, DiffType::ADDED});
+            collectAll(remoteTree, rChild, DiffType::ADDED, diffs);  
         }
     }
 
@@ -370,7 +386,7 @@ bool downloadFile(const std::string& relativePath, const fs::path& localBaseFold
     std::string command = "GET_FILE " + relativePath;
     send(clientSocket, command.c_str(), static_cast<int>(command.size()), 0);
     uint64_t fileSize = 0;
-    if(!recvAll(clientSocket, reinterpret_cast<char*>(&fileSize), sizeof(fileSize)) || fileSize==0  ){
+    if(!recvAll(clientSocket, reinterpret_cast<char*>(&fileSize), sizeof(fileSize))){
         #ifdef _WIN32
             closesocket(clientSocket);
         #else   
@@ -458,8 +474,14 @@ int runClient(const fs::path& localFolder) {
                         fs::path targetFilePath = localFolder / diff.nodePath;
 
                         if (diff.type == DiffType::ADDED || diff.type == DiffType::MODIFIED) {
-                            std::cout << "[↓] Downloading: " << diff.nodePath << "\n";
-                            downloadFile(diff.nodePath, localFolder, 8080, "127.0.0.1");
+                            if(diff.isDirectory){
+                                std::cout << "[+] Creating Directory : " << diff.nodePath << "\n";
+                                fs::create_directories(targetFilePath);
+                            } else{
+                                std::cout << "[↓] Downloading: " << diff.nodePath << "\n";
+                                downloadFile(diff.nodePath, localFolder, 8080, "127.0.0.1");
+                            }
+                            
                         } else if (diff.type == DiffType::DELETED) {
                             std::cout << "[✕] Deleting local: " << diff.nodePath << "\n";
                             std::error_code ec;
