@@ -1,14 +1,31 @@
 #include <iostream>
-#include <winsock2.h>
-#include <ws2tcpip.h>
 #include <thread>
 #include <string>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <netdb.h>
+#include <arpa/inet.h>
+#include <cstring>
+#include <unistd.h>
+#include <netinet/in.h>
+#endif /* _WIN32 */
 
 #pragma comment(lib, "ws2_32.lib")
 
 #define PORT 8080
 
-void receive_messages(SOCKET server_socket) {
+#ifdef _WIN32
+#define SOCK SOCKET
+#define ERR_SOCK SOCKET_ERROR
+#else
+#define SOCK int
+#define ERR_SOCK (-1)
+#endif /* win32 */
+
+void receive_messages(SOCK server_socket) {
     char buffer[1024];
     while (true) {
         memset(buffer, 0, sizeof(buffer));
@@ -22,10 +39,12 @@ void receive_messages(SOCKET server_socket) {
 }
 
 int main() {
+#ifdef _WIN32
     WSADATA wsaData;
     WSAStartup(MAKEWORD(2, 2), &wsaData);
+#endif
 
-    SOCKET client_socket = socket(AF_INET, SOCK_STREAM, 0);
+    SOCK client_socket = socket(AF_INET, SOCK_STREAM, 0);
 
 
     sockaddr_in server_addr{};
@@ -33,9 +52,11 @@ int main() {
     server_addr.sin_port = htons(PORT);
     inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr);
 
-    if (connect(client_socket, (sockaddr*)&server_addr, sizeof(server_addr)) == SOCKET_ERROR) {
+    if (connect(client_socket, (sockaddr*)&server_addr, sizeof(server_addr)) == ERR_SOCK) {
         std::cout << "Connection failed.\n";
+#ifdef _WIN32
         WSACleanup();
+#endif
         return 1;
     }
 
@@ -49,8 +70,12 @@ int main() {
 
     if (std::string(auth_res) != "AUTH_OK") {
         std::cout << "Authentication failed! Wrong password.\n";
+#ifdef _WIN32
         closesocket(client_socket);
         WSACleanup();
+#else
+        close(client_socket);
+#endif /* _WIN32 */
         return 0;
     }
 
@@ -67,8 +92,12 @@ int main() {
         send(client_socket, msg.c_str(), msg.length(), 0);
     }
 
-    closesocket(client_socket);
+#ifdef _WIN32
+    closesocket(server_socket);
     WSACleanup();
+#else
+    close(client_socket);
+#endif /* _WIN32 */
     return 0;
 }
 // test changes

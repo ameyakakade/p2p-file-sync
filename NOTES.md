@@ -17,6 +17,10 @@ changed.
 
 Use sqlite to store timestamps.
 
+## Openssl
+Need to build openssl in order to get the appropriate headers. Maybe
+should build openssl along with our project or use system wide openssl.
+
 "Using SSL BIO might work for this method." -> Talked with gemini, too
 overpowered for our applicationm, sticking with normal sockets.
 

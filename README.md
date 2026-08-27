@@ -1,4 +1,4 @@
-# p2p-file-transfer
+# p2p-file-synchronisation
 Sync files over local network
 
 ## Building
