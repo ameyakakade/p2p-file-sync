@@ -29,3 +29,36 @@ Socket Programing: https://web.stanford.edu/class/archive/cs/cs107/cs107.1238/le
 TLS Examples: https://stackoverflow.com/questions/7698488/turn-a-simple-socket-into-an-ssl-socket
 
 https://blog.netherlabs.nl/articles/2009/01/18/the-ultimate-so_linger-page-or-why-is-my-tcp-not-reliable
+
+## How do nodes decide server and client
+### This is how it will work assuming they figure out who is server and client.
+#### node 1
+lets sync
+i am now client
+requesting tree
+comparing both trees - calculating updates
+client will perform updates.
+bye bye
+
+
+#### node 2
+lets sync
+i am now server
+sending tree
+ending
+
+## How will nodes decide who is server and client?
+No idea. Will figure it out.
+
+Maybe this helps:
+node 1
+sent lets sync
+waiting for response
+node responded and wants me to be client.
+
+node 2
+got sync req
+i am server
+asking other node to be client.
+
+## Will having many nodes trying to sync cause issues?
