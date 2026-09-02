@@ -8,12 +8,15 @@
 #include <filesystem>
 #include <unordered_map>
 #include <cstdint>
+#include <thread>
+#include <chrono>
 #include "parser.h"
 
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#pragma comment(lib, "ws2_32.lib")
 #else
 #include <netdb.h>
 #include <arpa/inet.h>
@@ -83,6 +86,7 @@ struct MerkleTreeNode {
     fs::path         nodePath;      
     bool             isDirectory;
     uint64_t         hash;
+    
     std::vector<int> children;     // Indices into the pool vector
 };
 
@@ -431,105 +435,26 @@ bool downloadFile(const std::string& relativePath, const fs::path& localBaseFold
     #endif
         return true;
 }
-int runClient(const fs::path& localFolder) {
-#ifdef _WIN32
-    WSADATA wsaData;
-    WSAStartup(MAKEWORD(2, 2), &wsaData);
-#endif
 
-    while (true) {
-        MerkleTree localTree;
-        localTree.buildTree(localFolder);
-
-        // Step 1: Request Merkle Tree from server
-        SOCK client_socket = socket(AF_INET, SOCK_STREAM, 0);
-        sockaddr_in server_addr{};
-        server_addr.sin_family = AF_INET;
-        server_addr.sin_port = htons(8080);
-        inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr);
-
-        if (connect(client_socket, (sockaddr*)&server_addr, sizeof(server_addr)) != ERR_SOCK) {
-            std::string req = "GET_TREE";
-            send(client_socket, req.c_str(), static_cast<int>(req.size()), 0);
-
-            std::vector<char> treeBuf(1024 * 64, 0);
-            int r = recv(client_socket, treeBuf.data(), static_cast<int>(treeBuf.size()) - 1, 0);
-
-#ifdef _WIN32
-            closesocket(client_socket);
-#else
-            close(client_socket);
-#endif
-
-            if (r > 0) {
-                MerkleTree remoteTree;
-                remoteTree.buildTreeString(treeBuf.data());
-
-                if (!localTree.checkIfEqual(remoteTree)) {
-                    std::cout << "\n[!] Sync discrepancy detected. Resolving...\n";
-
-                    std::vector<FileDifference> diffs = MerkleTree::findDifferences(localTree, remoteTree);
-
-                    for (const auto& diff : diffs) {
-                        fs::path targetFilePath = localFolder / diff.nodePath;
-
-                        if (diff.type == DiffType::ADDED || diff.type == DiffType::MODIFIED) {
-                            if(diff.isDirectory){
-                                std::cout << "[+] Creating Directory : " << diff.nodePath << "\n";
-                                fs::create_directories(targetFilePath);
-                            } else{
-                                std::cout << "[↓] Downloading: " << diff.nodePath << "\n";
-                                downloadFile(diff.nodePath, localFolder, 8080, "127.0.0.1");
-                            }
-                            
-                        } else if (diff.type == DiffType::DELETED) {
-                            std::cout << "[✕] Deleting local: " << diff.nodePath << "\n";
-                            std::error_code ec;
-                            fs::remove_all(targetFilePath, ec);
-                        }
-                    }
-                    std::cout << "[✓] Sync complete.\n";
-                } else {
-                    std::cout << "[✓] Local folder is up-to-date.\n";
-                }
-            }
-        }
-
-        // Checking every 5 seconds
-        #ifdef _WIN32
-            Sleep(5000);
-        #else
-            usleep(5000*1000);
-        #endif
-    }
-
-#ifdef _WIN32
-    WSACleanup();
-#endif
-    return 0;
-}
-
-int runServer(const fs::path& localFolder) {
+void runServer(const fs::path& localFolder, int port = 8080) {
     MerkleTree localTree;
 
-#ifdef _WIN32
-    WSADATA wsaData;
-    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-        std::cerr << "WSAStartup failed.\n";
-        return 1;
-    }
-#endif
 
     SOCK server_socket = socket(AF_INET, SOCK_STREAM, 0);
+    int opt = 1;
+    setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, (char*)&opt, sizeof(opt));
     sockaddr_in server_addr{};
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = INADDR_ANY;
-    server_addr.sin_port = htons(8080);
+    server_addr.sin_port = htons(port);
 
-    bind(server_socket, (sockaddr*)&server_addr, sizeof(server_addr));
-    listen(server_socket, 5);
+    if(bind(server_socket, (sockaddr*)&server_addr, sizeof(server_addr))==ERR_SOCK){
+        std::cerr << "[Server] Bind Failed on Port" << std::endl;
+        return;
+    }
+    listen(server_socket, 10);
 
-    std::cout << "Server listening on port 8080 for folder: " << localFolder << "\n";
+    std::cout << "Server listening for folder: " << localFolder << "\n";
 
     while (true) {
         sockaddr_in client_addr;
@@ -542,57 +467,137 @@ int runServer(const fs::path& localFolder) {
 #endif
         if(client_socket==INV_SOCK){continue;}
         char reqBuff[1024] = {0};
-        int bytesRead = recv(client_socket, reqBuff, sizeof(reqBuff), 0);
+        int bytesRead = recv(client_socket, reqBuff, sizeof(reqBuff)-1, 0);
         if(bytesRead > 0){ // means there is a request by the client
             std::string request(reqBuff, bytesRead);
             if(request=="GET_TREE"){ // send the merkle tree
                 localTree.clear();
                 localTree.buildTree(localFolder);
                 std::string serialisedTree = localTree.dumpTreeString();
+                uint64_t treeSize = serialisedTree.size();
+                sendAll(client_socket, reinterpret_cast<char*>(&treeSize), sizeof(treeSize));
                 sendAll(client_socket, serialisedTree.c_str(), serialisedTree.size());
             } else if(request.substr(0, 9) == "GET_FILE "){ // send the file
                 std::string relativePath = request.substr(9);
                 fs::path fullPath = localFolder / relativePath;
-                std::cout << "Sending File: " << relativePath << "\n";
                 sendFileOverSocket(client_socket, fullPath);
             }
         }
-        #ifdef _WIN32
-            closesocket(client_socket);
-        #else   
-            close(client_socket);
-        #endif
+    #ifdef _WIN32
+        closesocket(client_socket);
+    #else   
+        close(client_socket);
+    #endif
     }
+}
+struct peerEndPoints{
+    std::string ip;
+    int port;
+};
+
+void runSync(const fs::path& localFolder,const std::vector<peerEndPoints>& peers){
+    while(true){
+        for(const auto& peer : peers){
+            MerkleTree localTree;
+            localTree.buildTree(localFolder);
+            SOCK client_socket = socket(AF_INET, SOCK_STREAM, 0);
+            sockaddr_in server_addr{};
+            server_addr.sin_family = AF_INET;
+            server_addr.sin_port = htons(peer.port);
+            inet_pton(AF_INET, peer.ip.c_str(), &server_addr.sin_addr);
+            if (connect(client_socket, (sockaddr*)&server_addr, sizeof(server_addr)) != ERR_SOCK){
+                std::string req = "GET_TREE";
+                send(client_socket, req.c_str(), static_cast<int>(req.size()), 0);
+                uint64_t treeSize = 0;
+                if(recvAll(client_socket, reinterpret_cast<char*>(&treeSize), sizeof(treeSize)) && treeSize>0){
+                    std::vector<char>treeBuf(treeSize+1, 0);   
+                    if(recvAll(client_socket, treeBuf.data(), treeSize)){
+                        #ifdef _WIN32
+                            closesocket(client_socket);
+                        #else   
+                            close(client_socket);
+                        #endif
+                        MerkleTree remoteTree;
+                        remoteTree.buildTreeString(treeBuf.data());
+                        if (!localTree.checkIfEqual(remoteTree)) {
+                            std::cout << "\n[!] Sync discrepancy detected. Resolving...\n";
+
+                            std::vector<FileDifference> diffs = MerkleTree::findDifferences(localTree, remoteTree);
+
+                            for (const auto& diff : diffs) {
+                                fs::path targetFilePath = localFolder / diff.nodePath;
+
+                                if (diff.type == DiffType::ADDED || diff.type == DiffType::MODIFIED) {
+                                    if(diff.isDirectory){
+                                        std::cout << "[+] Creating Directory : " << diff.nodePath << "\n";
+                                        fs::create_directories(targetFilePath);
+                                    } else{
+                                        std::cout << "[↓] Downloading: " << diff.nodePath << "\n";
+                                        downloadFile(diff.nodePath, localFolder, peer.port, peer.ip.c_str());
+                                    }
+                                } else if (diff.type == DiffType::DELETED) {
+                                    std::cout << "[✕] Deleting local: " << diff.nodePath << "\n";
+                                    std::error_code ec;
+                                    fs::remove_all(targetFilePath, ec);
+                                }
+                            }
+                            std::cout << "[✓] Sync complete.\n";
+                        }
+                        continue;
+                    }
+                }
+                #ifdef _WIN32
+                    closesocket(client_socket);
+                #else
+                    close(client_socket);
+                #endif
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(3));
+    }
+}
+int main(int argc, char** argv) {
+    if (argc < 3) {
+        std::cerr << "Usage: " << argv[0] << " <sync_folder> <my_port> [peer_ip:port ...]\n\n";
+        std::cerr << "Example for Testing on Same Laptop:\n";
+        std::cerr << "  Terminal 1: " << argv[0] << " C:\\path\\to\\f1 8080 127.0.0.1:8081\n";
+        std::cerr << "  Terminal 2: " << argv[0] << " C:\\path\\to\\f2 8081 127.0.0.1:8080\n";
+        return 1;
+    }
+
+    fs::path targetFolder = argv[1];
+    int myPort = std::stoi(argv[2]);
+
+    if (!fs::exists(targetFolder)) {
+        fs::create_directories(targetFolder);
+    }
+    std::vector<peerEndPoints> peerIPs;
+    for (int i = 3; i < argc; ++i) {
+        std::string s = argv[i];
+        size_t colonPos = s.find(':');
+        if (colonPos != std::string::npos) {
+            std::string ip = s.substr(0, colonPos);
+            int port = std::stoi(s.substr(colonPos + 1));
+            peerIPs.push_back({ip, port});
+        }
+    }
+
+#ifdef _WIN32
+    WSADATA wsaData;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        std::cerr << "WSAStartup failed.\n";
+        return 1;
+    }
+#endif
+
+    std::thread serverThread([targetFolder, myPort]() {
+        runServer(targetFolder, myPort);
+    });
+    serverThread.detach();
+    runSync(targetFolder, peerIPs);
 
 #ifdef _WIN32
     WSACleanup();
 #endif
     return 0;
-}
-
-int main(int argc, char** argv) {
-    if (argc < 3) {
-        std::cerr << "Usage:\n";
-        std::cerr << "  Server: " << argv[0] << " --server <path_to_folder>\n";
-        std::cerr << "  Client: " << argv[0] << " --client <path_to_folder>\n";
-        return 1;
-    }
-
-    std::string mode = argv[1];
-    fs::path targetFolder = argv[2];
-
-    if (!fs::exists(targetFolder)) {
-        std::cerr << "Error: Directory does not exist -> " << targetFolder << "\n";
-        return 1;
-    }
-
-    if (mode == "--server" || mode == "-s") {
-        return runServer(targetFolder);
-    } else if (mode == "--client" || mode == "-c") {
-        return runClient(targetFolder);
-    } else {
-        std::cerr << "Unknown mode: " << mode << "\n";
-        std::cerr << "Use --server or --client\n";
-        return 1;
-    }
 }
