@@ -86,7 +86,7 @@ struct MerkleTreeNode {
     fs::path         nodePath;      
     bool             isDirectory;
     uint64_t         hash;
-    
+    uint64_t mtime = 0;
     std::vector<int> children;     // Indices into the pool vector
 };
 
@@ -154,6 +154,8 @@ class MerkleTree {
         } else if (fs::is_regular_file(path)) {
             curr.isDirectory = false;
             curr.hash = hashFile(path);
+            auto ftime = fs::last_write_time(path);
+            curr.mtime = std::chrono::duration_cast<std::chrono::seconds>(ftime.time_since_epoch()).count();    
         }
 
         pool[myIndex] = curr; // Save updated data back into reserved index
@@ -173,6 +175,7 @@ class MerkleTree {
                              FIELD_PARSE(&sp, "nodePath",    curr.nodePath = stringParser(&sp);)
                              FIELD_PARSE(&sp, "isDirectory", curr.isDirectory = boolParser(&sp);)
                              FIELD_PARSE(&sp, "hash",        curr.hash = natParser(&sp);)
+                             FIELD_PARSE(&sp, "mtime", curr.mtime = natParser(&sp);)
                              FIELD_PARSE(&sp, "children",
                                          ARRAY_PARSE(&sp, curr.children.push_back(natParser(&sp));)
                                  )
@@ -190,6 +193,7 @@ class MerkleTree {
             os << "nodePath:" << pool[i].nodePath << ",";
             os << "isDirectory:" << (pool[i].isDirectory ? "true" : "false") << ",";
             os << "hash:" << pool[i].hash << ",";
+            os << "mtime:" << pool[i].mtime << ",";
             os << "children:[";
             for(int child : pool[i].children) {
                 os << child << ",";
@@ -253,7 +257,11 @@ class MerkleTree {
 
         // Leaf file comparison
         if (!lNode.isDirectory && !rNode.isDirectory) {
-            diffs.push_back({lNode.nodePath.generic_string(), DiffType::MODIFIED, false});
+            if(lNode.hash!=rNode.hash){
+                if(rNode.mtime > lNode.mtime){
+                    diffs.push_back({lNode.nodePath.generic_string(), DiffType::MODIFIED, false});
+                }
+            }
             return;
         }
 
@@ -270,7 +278,8 @@ class MerkleTree {
 
             if (it == remoteChildrenMap.end()) {
                 // Present locally but absent in remote
-                collectAll(localTree, lChild, DiffType::DELETED, diffs);
+                // collectAll(localTree, lChild, DiffType::DELETED, diffs);
+                continue;
             } else {
                 // Present in both : dive deeper into children
                 compareNodes(localTree, lChild, remoteTree, it->second, diffs);
