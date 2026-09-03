@@ -52,9 +52,11 @@ zero:;
     nob_cmd_append(&cmd, "/Febuild/main.exe");
     nob_cmd_append(&cmd, "/Fobuild/");
     nob_cmd_append(&cmd, "src/main.cpp");
+    nob_cmd_append(&cmd, "src/filehashing.cpp");
 #else
     nob_cmd_append(&cmd, "c++", "-std=c++17", "-Wall", "-Wextra", "-o", BUILD_DIR"main");
     nob_cmd_append(&cmd, "src/main.cpp");
+    nob_cmd_append(&cmd, "src/filehashing.cpp");
     nob_cmd_append(&cmd, "-ggdb");
 #endif /* win32 */
     RUN;
