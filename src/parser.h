@@ -5,11 +5,23 @@
 #include <cstdint>
 #include <cassert>
 
+struct Sp;
+char gc(Sp* sp);
+Sp createSp(const char* sp);
+void printSp(Sp* sp);
+void eatSpaces(Sp* sp);
+void charParser(Sp* sp, char c);
+void keywordParser(Sp* sp, const char* keyword);
+uint64_t natParser(Sp* sp);
+std::string stringParser(Sp* sp);
+bool boolParser(Sp* sp);
+
 struct Sp {
     const char* string;
     int loc;
 };
 
+#ifdef PARSER_IMPLEMENTATION
 char gc(Sp* sp) {
     return sp->string[sp->loc];
 }
@@ -79,6 +91,8 @@ bool boolParser(Sp* sp) {
     if(a == "true") return true;
     assert(false);
 }
+
+#endif /* PARSER_IMPLEMENTATION */
 
 #define FIELD_PARSE(sp, keyword, parser)        \
     keywordParser(sp, keyword);                 \
