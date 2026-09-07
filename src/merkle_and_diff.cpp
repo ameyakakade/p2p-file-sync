@@ -10,6 +10,7 @@
 
 void MerkleTree::clear() {
     pool.clear();
+    conflicts.clear();
 }
     
 int MerkleTree::buildTree(const fs::path& path, const fs::path& rootPath) {
@@ -23,7 +24,7 @@ int MerkleTree::buildTree(const fs::path& path, const fs::path& rootPath) {
     MerkleTreeNode curr;
     curr.nodePath = fs::relative(path, baseRoot);
     curr.hash = FNV_OFFSET_BASIS;
-
+    curr.vectorClock.increment[nodeId];
     int myIndex = static_cast<int>(pool.size());
     pool.push_back(curr); 
 
@@ -141,7 +142,8 @@ void MerkleTree::collectAll(const MerkleTree& tree, int idx, DiffType type, std:
     diffs.push_back({
             node.nodePath.generic_string(),
             type,
-            node.isDirectory
+            node.isDirectory,
+            false //initially hasConflict = false
         });
     if(node.isDirectory){
         for(int childidx : node.children){
@@ -162,9 +164,29 @@ void MerkleTree::compareNodes(const MerkleTree& localTree, int localIdx,
     // Leaf file comparison
     if (!lNode.isDirectory && !rNode.isDirectory) {
         if(lNode.hash!=rNode.hash){
-            if(rNode.mtime > lNode.mtime){
+            int clockCmp = lNode.vectorClock.compareTo(rNode.vectorClock);
+            if(clockCmp==0){ // concurrent modification
+                std::cout << "Concurrent modification detected: " << lNode.nodePath << "\n";
+                std::cout << "   Local:  hash=0x" << std::hex << lNode.hash << std::dec 
+                          << ", clock=" << lNode.vectorClock.toString() << "\n";
+                std::cout << "   Remote: hash=0x" << std::hex << rNode.hash << std::dec 
+                          << ", clock=" << rNode.vectorClock.toString() << "\n";
+                FileDifference diff;
+                diff.nodePath = lNode.nodePath.generic_string();
+                diff.type = DiffType::MODIFIED;
+                diff.isDirectory = false;
+                diff.hasConflict = true;
+                diff.conflict.filePath = diff.nodePath;
+                diff.conflict.localHash = lNode.hash;
+                diff.conflict.remoteHash = rNode.hash;
+                diff.conflict.localClock = lNode.vectorClock;
+                diff.conflict.remoteClock = rNode.vectorClock;
+                diff.conflict.resolution = ConflictResolution::KEEP_BOTH;
+                diff.conflict.timestamp = std::chrono::system_clock::now();
+                diffs.push_back(diff);
+            } else if(clockCmp<0){ // download remote Version
                 diffs.push_back({lNode.nodePath.generic_string(), DiffType::MODIFIED, false});
-            }
+            } // if clockCmp > 0 => local is Newer. dont Download from remote
         }
         return;
     }
@@ -182,7 +204,7 @@ void MerkleTree::compareNodes(const MerkleTree& localTree, int localIdx,
 
         if (it == remoteChildrenMap.end()) {
             // Present locally but absent in remote
-            // collectAll(localTree, lChild, DiffType::DELETED, diffs);
+            collectAll(localTree, lChild, DiffType::DELETED, diffs);
             continue;
         } else {
             // Present in both : dive deeper into children
