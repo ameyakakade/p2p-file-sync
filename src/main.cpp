@@ -10,6 +10,8 @@
 #include <cstdint>
 #include <thread>
 #include <chrono>
+#include <set>
+#include <mutex>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -181,9 +183,95 @@ bool downloadFile(const std::string& relativePath, const fs::path& localBaseFold
     #endif
         return true;
 }
+//=================
+// upload file fxn to send local file to remote
+bool uploadFile(const std::string& relativePath, const fs::path& localBaseFolder, int remotePort, const char* remoteIp){
+    fs::path fullPath = localBaseFolder / relativePath;
+    SOCK clientSocket = socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in server_addr{};
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(remotePort);
+    inet_pton(AF_INET, remoteIp, &server_addr.sin_addr);
 
-void runServer(const fs::path& localFolder, int port = 8080) {
+    if(connect(clientSocket, (sockaddr*)&server_addr, sizeof(server_addr)) == ERR_SOCK){
+        #ifdef _WIN32
+            closesocket(clientSocket);
+        #else
+            close(clientSocket);
+        #endif
+        return false;
+    }
+    std::string command = "PUT_FILE" + relativePath;
+    if(!sendAll(clientSocket, command.c_str(), command.size())){
+        #ifdef _WIN32
+            closesocket(clientSocket);
+        #else
+            close(clientSocket);
+        #endif
+        return false;
+    }
+    bool result = sendFileOverSocket(clientSocket, fullPath);
+    #ifdef _WIN32
+        closesocket(clientSocket);
+    #else
+        close(clientSocket);
+    #endif
+    return result;
+}
+// tell remote peer to delete a file on their side
+bool deleteRemoteFile(const std::string& relativePath, int remotePort, const char* remoteIp){
+    SOCK clientSocket = socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in server_addr{};
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(remotePort);
+    inet_pton(AF_INET, remoteIp, &server_addr.sin_addr);
+    if(connect(clientSocket, (sockaddr*)&server_addr, sizeof(server_addr))==ERR_SOCK){
+        #ifdef _WIN32
+            closesocket(clientSocket);
+        #else
+            close(clientSocket);
+        #endif
+        return false;
+    }
+    std::string command = "DEL_FILE" + relatevPath;
+    bool result = sendAll(clientSocket, command.c_str(), command.size());
+    #ifdef _WIN32
+        closesocket(clientSocket);
+    #else
+        close(clientSocket);
+    #endif
+    return result;
+    
+}
+// handling conflict using keep both strategy
+void handleConflict(const FileDifference& diff, const fs::path& localBaseFolder){
+    if(!diff.hasConflict){
+        return;
+    }
+    const auto& conflict = diff.conflict;
+    fs:: path targetPath = localBaseFolder / diff.nodePath;
+    switch(conflict.resolution){
+        case ConflictResolution::KEEP_BOTH: {
+            std::string conflictSuffix = ".conflict_" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
+            fs::path conflictPath = targetPath.parent_path() / (targetPath.file_name().string() + conflictSuffix);
+            break;
+        }
+        case ConflictResolution::REMOTE_WINS:
+            std::cout << "Accepting remote version\n";
+            break;
+        case ConflictResolution::LOCAL_WINS:
+            std::cout << "Keeping local version\n";
+            break;
+        case ConflictResolution::VECTOR_CLOCK:
+            std::cout << "Conflict resolved by vector clock\n";
+            break;
+    }
+}
+
+// =================
+void runServer(const fs::path& localFolder, int port = 8080, uint32_t nodeId = 1) {
     MerkleTree localTree;
+    std::mutex treeMutex;
 
     SOCK server_socket = socket(AF_INET, SOCK_STREAM, 0);
     int opt = 1;
@@ -216,6 +304,7 @@ void runServer(const fs::path& localFolder, int port = 8080) {
         if(bytesRead > 0){ // means there is a request by the client
             std::string request(reqBuff, bytesRead);
             if(request=="GET_TREE"){ // send the merkle tree
+                std::lock_guard<std::mutex> lock(treeMutex);
                 localTree.clear();
                 localTree.buildTree(localFolder);
                 std::string serialisedTree = localTree.dumpTreeString();
@@ -226,6 +315,14 @@ void runServer(const fs::path& localFolder, int port = 8080) {
                 std::string relativePath = request.substr(9);
                 fs::path fullPath = localFolder / relativePath;
                 sendFileOverSocket(client_socket, fullPath);
+            } else if(request.substr(0, 9)=="PUT_FILE"){
+                std::string relativePath = request.substr(9);
+                fs::path targetPath = localFolder / relativePath;
+                fs::create_directories(targetPath.parent_path());
+                uint64_t fileSize = 0;
+                if(recvAll)
+            } else if(request.substr(0, 9)=="DEL_FILE"){
+
             }
         }
     #ifdef _WIN32
