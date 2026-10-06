@@ -233,7 +233,7 @@ bool deleteRemoteFile(const std::string& relativePath, int remotePort, const cha
         #endif
         return false;
     }
-    std::string command = "DEL_FILE" + relatevPath;
+    std::string command = "DEL_FILE" + relativePath;
     bool result = sendAll(clientSocket, command.c_str(), command.size());
     #ifdef _WIN32
         closesocket(clientSocket);
@@ -253,7 +253,7 @@ void handleConflict(const FileDifference& diff, const fs::path& localBaseFolder)
     switch(conflict.resolution){
         case ConflictResolution::KEEP_BOTH: {
             std::string conflictSuffix = ".conflict_" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
-            fs::path conflictPath = targetPath.parent_path() / (targetPath.file_name().string() + conflictSuffix);
+            fs::path conflictPath = targetPath.parent_path() / (targetPath.filename().string() + conflictSuffix);
             break;
         }
         case ConflictResolution::REMOTE_WINS:
@@ -320,9 +320,31 @@ void runServer(const fs::path& localFolder, int port = 8080, uint32_t nodeId = 1
                 fs::path targetPath = localFolder / relativePath;
                 fs::create_directories(targetPath.parent_path());
                 uint64_t fileSize = 0;
-                if(recvAll)
+                if(recvAll(client_socket, reinterpret_cast<char*>(&fileSize), sizeof(fileSize)) && fileSize > 0){
+                    std::ofstream outFile(targetPath, std::ios::binary);
+                    if(outFile.is_open()){
+                        const size_t bufferSize = 65536;
+                        std::vector<char>buffer(bufferSize);
+                        uint64_t remaining = fileSize;
+                        while(remaining > 0){
+                            size_t toRecv = (std::min)(remaining, static_cast<uint64_t>(bufferSize));
+                            if(recvAll(client_socket, buffer.data(), toRecv)){
+                                outFile.write(buffer.data(), toRecv);
+                                remaining-=toRecv;
+                            } else{
+                                break;
+                            }
+                        }
+                        outFile.close();
+                    }
+                }
             } else if(request.substr(0, 9)=="DEL_FILE"){
-
+                std::string relativePath = request.substr(9);
+                fs::path targetPath = localFolder / relativePath;
+                std::error_code ec;
+                if(fs::exists(targetPath)){
+                    fs::remove_all(targetPath, ec);
+                }
             }
         }
     #ifdef _WIN32
@@ -337,10 +359,15 @@ struct peerEndPoints{
     int port;
 };
 
-void runSync(const fs::path& localFolder,const std::vector<peerEndPoints>& peers){
+void runSync(const fs::path& localFolder,const std::vector<peerEndPoints>& peers, uint32_t nodeId){
+    MerkleTree localTree(nodeId);
+    std::set<std::string>syncedThisCycle;
+
     while(true){
+        syncedThisCycle.clear();
         for(const auto& peer : peers){
-            MerkleTree localTree;
+            localTree.clear();
+            localTree.nodeId = nodeId;
             localTree.buildTree(localFolder);
             SOCK client_socket = socket(AF_INET, SOCK_STREAM, 0);
             sockaddr_in server_addr{};
@@ -363,27 +390,57 @@ void runSync(const fs::path& localFolder,const std::vector<peerEndPoints>& peers
                         remoteTree.buildTreeString(treeBuf.data());
                         if (!localTree.checkIfEqual(remoteTree)) {
                             std::cout << "\n[!] Sync discrepancy detected. Resolving...\n";
-
+                            std::cout << "\n[PULL] Applying remote changes locally...\n";
                             std::vector<FileDifference> diffs = MerkleTree::findDifferences(localTree, remoteTree);
 
                             for (const auto& diff : diffs) {
+                                if(syncedThisCycle.count(diff.nodePath)){
+                                    continue;
+                                }
                                 fs::path targetFilePath = localFolder / diff.nodePath;
 
                                 if (diff.type == DiffType::ADDED || diff.type == DiffType::MODIFIED) {
-                                    if(diff.isDirectory){
-                                        std::cout << "[+] Creating Directory : " << diff.nodePath << "\n";
-                                        fs::create_directories(targetFilePath);
-                                    } else{
-                                        std::cout << "[↓] Downloading: " << diff.nodePath << "\n";
+                                    if(diff.hasConflict){
+                                        handleConflict(diff, localFolder);
                                         downloadFile(diff.nodePath, localFolder, peer.port, peer.ip.c_str());
+                                    } else{
+                                        if(diff.isDirectory){
+                                            std::cout << "[+] Creating Directory : " << diff.nodePath << "\n";
+                                            fs::create_directories(targetFilePath);
+                                        } else{
+                                            std::cout << "[↓] Downloading: " << diff.nodePath << "\n";
+                                            downloadFile(diff.nodePath, localFolder, peer.port, peer.ip.c_str());
+                                        }
                                     }
                                 } else if (diff.type == DiffType::DELETED) {
                                     std::cout << "[✕] Deleting local: " << diff.nodePath << "\n";
                                     std::error_code ec;
                                     fs::remove_all(targetFilePath, ec);
                                 }
+                                syncedThisCycle.insert(diff.nodePath);
                             }
-                            std::cout << "[✓] Sync complete.\n";
+
+                            // push changes to remote
+                            std::cout << "Pushing changes to remote\n";
+                            std::vector<FileDifference>localDiffs = MerkleTree::findDifferences(remoteTree, localTree);
+                            for(const auto& diff : localDiffs){
+                                if(syncedThisCycle.count(diff.nodePath)){
+                                    continue;
+                                }
+                                if(diff.type == DiffType::ADDED || diff.type == DiffType::MODIFIED){
+                                    if(diff.isDirectory){
+                                        std::cout << "Creating remote directory : " << diff.nodePath << std::endl;
+                                    } else{
+                                        std::cout << "Uploading : " << diff.nodePath << std::endl;
+                                        uploadFile(diff.nodePath, localFolder, peer.port, peer.ip.c_str());
+                                    }
+                                } else{
+                                    std::cout << "Deleting remote : " << diff.nodePath << std::endl;
+                                    deleteRemoteFile(diff.nodePath, peer.port, peer.ip.c_str());
+                                }
+                                syncedThisCycle.insert(diff.nodePath);
+                            }
+                            std::cout << "[✓] Sync complete with : " << peer.ip << "::" << peer.port << std::endl;
                         }
                         continue;
                     }
@@ -400,21 +457,22 @@ void runSync(const fs::path& localFolder,const std::vector<peerEndPoints>& peers
 }
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::cerr << "Usage: " << argv[0] << " <sync_folder> <my_port> [peer_ip:port ...]\n\n";
+        std::cerr << "Usage: " << argv[0] << " <sync_folder> <my_port> <nodeId> [peer_ip:port ...]\n\n";
         std::cerr << "Example for Testing on Same Laptop:\n";
-        std::cerr << "  Terminal 1: " << argv[0] << " C:\\path\\to\\f1 8080 127.0.0.1:8081\n";
-        std::cerr << "  Terminal 2: " << argv[0] << " C:\\path\\to\\f2 8081 127.0.0.1:8080\n";
+        std::cerr << "  Terminal 1: " << argv[0] << " C:\\path\\to\\f1 8080 1 127.0.0.1:8081\n";
+        std::cerr << "  Terminal 2: " << argv[0] << " C:\\path\\to\\f2 8081 2 127.0.0.1:8080\n";
+        std::cerr << "NodeId must be unique across all peers" << std::endl;
         return 1;
     }
 
     fs::path targetFolder = argv[1];
     int myPort = std::stoi(argv[2]);
-
+    uint32_t nodeId = std::stoi(argv[3]);
     if (!fs::exists(targetFolder)) {
         fs::create_directories(targetFolder);
     }
     std::vector<peerEndPoints> peerIPs;
-    for (int i = 3; i < argc; ++i) {
+    for (int i = 4; i < argc; ++i) {
         std::string s = argv[i];
         size_t colonPos = s.find(':');
         if (colonPos != std::string::npos) {
@@ -432,11 +490,11 @@ int main(int argc, char** argv) {
     }
 #endif
 
-    std::thread serverThread([targetFolder, myPort]() {
-        runServer(targetFolder, myPort);
+    std::thread serverThread([targetFolder, myPort, nodeId]() {
+        runServer(targetFolder, myPort, nodeId);
     });
     serverThread.detach();
-    runSync(targetFolder, peerIPs);
+    runSync(targetFolder, peerIPs, nodeId);
 
 #ifdef _WIN32
     WSACleanup();
