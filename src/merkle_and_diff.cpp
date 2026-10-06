@@ -24,7 +24,7 @@ int MerkleTree::buildTree(const fs::path& path, const fs::path& rootPath) {
     MerkleTreeNode curr;
     curr.nodePath = fs::relative(path, baseRoot);
     curr.hash = FNV_OFFSET_BASIS;
-    curr.vectorClock.increment[nodeId];
+    curr.vectorClock.increment(nodeId);
     int myIndex = static_cast<int>(pool.size());
     pool.push_back(curr); 
 
@@ -176,7 +176,7 @@ void MerkleTree::compareNodes(const MerkleTree& localTree, int localIdx,
                 diff.type = DiffType::MODIFIED;
                 diff.isDirectory = false;
                 diff.hasConflict = true;
-                diff.conflict.filePath = diff.nodePath;
+                diff.conflict.filepath = diff.nodePath;
                 diff.conflict.localHash = lNode.hash;
                 diff.conflict.remoteHash = rNode.hash;
                 diff.conflict.localClock = lNode.vectorClock;

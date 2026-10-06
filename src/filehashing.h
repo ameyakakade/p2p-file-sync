@@ -2,7 +2,8 @@
 #include <cstdint>
 #include <string>
 #include <filesystem>
-
+#include <map>
+#include <set>
 namespace fs = std::filesystem;
 
 const uint64_t FNV_OFFSET_BASIS = 14695981039346656037ULL;
@@ -15,10 +16,10 @@ struct VectorClock{
     }
     void merge(const VectorClock& other){ //changing our clock based on other's clock
         for(const auto&[nodeId, value] : other.clocks){
-            clocks[nodeId] = std::max(clocks[nodeId], value);
+            clocks[nodeId] = (std::max)(clocks[nodeId], value);
         }
     }
-    int compareTo(const VectorClock& other){
+    int compareTo(const VectorClock& other) const{
         bool thisHasGreater = false;
         bool otherHasGreater = false;
         std::set<uint32_t>allNodeIds;

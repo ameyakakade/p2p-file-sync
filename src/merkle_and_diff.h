@@ -1,5 +1,6 @@
 #include <filesystem>
 #include <vector>
+#include "filehashing.h"
 
 namespace fs = std::filesystem;
 
