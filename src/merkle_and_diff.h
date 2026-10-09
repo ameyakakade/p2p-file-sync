@@ -13,8 +13,8 @@ enum class ConflictResolution{
 
 struct ConflictRecord{
     std::string filepath;
-    uint64_t localHash;
-    uint64_t remoteHash;
+    uint64_t localHash = 0;
+    uint64_t remoteHash = 0;
     VectorClock localClock;
     VectorClock remoteClock;
     ConflictResolution resolution;
@@ -33,7 +33,8 @@ struct MerkleTreeNode {
 };
 
 enum class DiffType {
-    ADDED,      // Exists locally, missing remote
+    LOCAL_ONLY,
+    REMOTE_ONLY,
     MODIFIED,   // Content/hash mismatch
     DELETED    // Exists locally, missing in Remote
 };

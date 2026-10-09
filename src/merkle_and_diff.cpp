@@ -153,69 +153,50 @@ void MerkleTree::collectAll(const MerkleTree& tree, int idx, DiffType type, std:
 }
 
 void MerkleTree::compareNodes(const MerkleTree& localTree, int localIdx,
-                         const MerkleTree& remoteTree, int remoteIdx,
-                         std::vector<FileDifference>& diffs) {
+                               const MerkleTree& remoteTree, int remoteIdx,
+                               std::vector<FileDifference>& diffs) {
     const auto& lNode = localTree.pool[localIdx];
     const auto& rNode = remoteTree.pool[remoteIdx];
-
-    // If subtree hashes match, skip checking this entire branch
+ 
     if (lNode.hash == rNode.hash) return;
-
-    // Leaf file comparison
+ 
     if (!lNode.isDirectory && !rNode.isDirectory) {
-        if(lNode.hash!=rNode.hash){
-            int clockCmp = lNode.vectorClock.compareTo(rNode.vectorClock);
-            if(clockCmp==0){ // concurrent modification
-                std::cout << "Concurrent modification detected: " << lNode.nodePath << "\n";
-                std::cout << "   Local:  hash=0x" << std::hex << lNode.hash << std::dec 
-                          << ", clock=" << lNode.vectorClock.toString() << "\n";
-                std::cout << "   Remote: hash=0x" << std::hex << rNode.hash << std::dec 
-                          << ", clock=" << rNode.vectorClock.toString() << "\n";
-                FileDifference diff;
-                diff.nodePath = lNode.nodePath.generic_string();
-                diff.type = DiffType::MODIFIED;
-                diff.isDirectory = false;
-                diff.hasConflict = true;
-                diff.conflict.filepath = diff.nodePath;
-                diff.conflict.localHash = lNode.hash;
-                diff.conflict.remoteHash = rNode.hash;
-                diff.conflict.localClock = lNode.vectorClock;
-                diff.conflict.remoteClock = rNode.vectorClock;
-                diff.conflict.resolution = ConflictResolution::KEEP_BOTH;
-                diff.conflict.timestamp = std::chrono::system_clock::now();
-                diffs.push_back(diff);
-            } else if(clockCmp<0){ // download remote Version
-                diffs.push_back({lNode.nodePath.generic_string(), DiffType::MODIFIED, false});
-            } // if clockCmp > 0 => local is Newer. dont Download from remote
+        if(lNode.hash != rNode.hash) {
+            // File exists in both but with different content
+            diffs.push_back({
+                lNode.nodePath.generic_string(), 
+                DiffType::MODIFIED,  // FIXED: was MODIFIED, still correct
+                false
+            });
         }
         return;
     }
-
-    // Map child relative paths to their pool index for remote directory
+ 
+    // Map remote children for lookup
     std::unordered_map<std::string, int> remoteChildrenMap;
     for (int rChild : rNode.children) {
         remoteChildrenMap[remoteTree.pool[rChild].nodePath.generic_string()] = rChild;
     }
-
+ 
     // Check local children against remote
     for (int lChild : lNode.children) {
         std::string lPath = localTree.pool[lChild].nodePath.generic_string();
         auto it = remoteChildrenMap.find(lPath);
-
+ 
         if (it == remoteChildrenMap.end()) {
-            // Present locally but absent in remote
-            collectAll(localTree, lChild, DiffType::DELETED, diffs);
+            // File only in local -> LOCAL_ONLY (UPLOAD)
+            collectAll(localTree, lChild, DiffType::LOCAL_ONLY, diffs);
             continue;
         } else {
-            // Present in both : dive deeper into children
+            // File in both: dive deeper
             compareNodes(localTree, lChild, remoteTree, it->second, diffs);
-            remoteChildrenMap.erase(it); // Mark as checked
+            remoteChildrenMap.erase(it);
         }
     }
-
-    // Any remaining items in remoteChildrenMap exist only in remote
+ 
+    // Remaining files in remote only -> REMOTE_ONLY (DOWNLOAD)
     for (const auto& [rPath, rChild] : remoteChildrenMap) {
-        collectAll(remoteTree, rChild, DiffType::ADDED, diffs);  
+        collectAll(remoteTree, rChild, DiffType::REMOTE_ONLY, diffs);
     }
 }
 
