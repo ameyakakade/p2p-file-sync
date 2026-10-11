@@ -56,10 +56,11 @@ zero:;
     nob_cmd_append(&cmd, "src/merkle_and_diff.cpp");
 #else
     nob_cmd_append(&cmd, "c++", "-std=c++17", "-Wall", "-Wextra", "-o", BUILD_DIR"main");
+    nob_cmd_append(&cmd, "-ggdb");
     nob_cmd_append(&cmd, "src/main.cpp");
     nob_cmd_append(&cmd, "src/filehashing.cpp");
     nob_cmd_append(&cmd, "src/merkle_and_diff.cpp");
-    nob_cmd_append(&cmd, "-ggdb");
+    nob_cmd_append(&cmd, "src/networking.cpp");
 #endif /* win32 */
     RUN;
 ////// finished building

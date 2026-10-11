@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <string>
+#include <sstream>
 #include <filesystem>
 #include <map>
 #include <set>

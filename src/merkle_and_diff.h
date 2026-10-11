@@ -2,6 +2,8 @@
 #include <vector>
 #include "filehashing.h"
 
+#ifndef MERKLE_AND_DIFF
+#define MERKLE_AND_DIFF
 namespace fs = std::filesystem;
 
 enum class ConflictResolution{
@@ -66,3 +68,5 @@ class MerkleTree {
                                          const MerkleTree& remoteTree, int remoteIdx,
                                          std::vector<FileDifference>& diffs);
 };
+
+#endif // MERKLE_AND_DIFF
