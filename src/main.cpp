@@ -130,12 +130,13 @@ void runServer(const fs::path& localFolder, int port = 8080, uint32_t nodeId = 1
     #endif
     }
 }
+
 struct peerEndPoints{
     std::string ip;
     int port;
 };
 
-void runSync(const fs::path& localFolder, const std::vector<peerEndPoints>& peers, uint32_t nodeId){
+void runClient(const fs::path& localFolder, const std::vector<peerEndPoints>& peers, uint32_t nodeId){
     std::set<std::string> recentlySyncedFiles;
     auto lastCleanup = std::chrono::steady_clock::now();
     
@@ -260,7 +261,14 @@ void runSync(const fs::path& localFolder, const std::vector<peerEndPoints>& peer
  
                     case DiffType::MODIFIED:
                         std::cout << "File modified: " << diff.nodePath << "\n";
-                        recentlySyncedFiles.insert(diff.nodePath);
+                        fs::rename(localFolder / diff.nodePath, (localFolder / diff.nodePath).string() + ".old");
+                        if (downloadFile(diff.nodePath, localFolder, peer.port, peer.ip.c_str())) {
+                            fs::remove((localFolder / diff.nodePath).string() + ".old");
+                            recentlySyncedFiles.insert(diff.nodePath);
+                            anyChanges = true;
+                        } else {
+                            std::cout << "Failed to sync modified file: " << diff.nodePath << "\n";
+                        }
                         break;
  
                     case DiffType::DELETED:
@@ -331,7 +339,7 @@ int main(int argc, char** argv) {
         runServer(targetFolder, myPort, nodeId);
     });
     serverThread.detach();
-    runSync(targetFolder, peerIPs, nodeId);
+    runClient(targetFolder, peerIPs, nodeId);
 
 #ifdef _WIN32
     WSACleanup();

@@ -39,6 +39,14 @@
 #include "networking.h"
 #include "filehashing.h"
 
+void closeSocket(SOCK sc) {
+    #ifdef _WIN32
+        closesocket(sc);
+    #else   
+        close(sc);
+    #endif
+}
+
 int receiveOverSocket(char* buf, int buflen, int port, const char* ip) {
 #ifdef _WIN32
     WSADATA wsaData;
@@ -129,36 +137,24 @@ bool downloadFile(const std::string& relativePath, const fs::path& localBaseFold
     inet_pton(AF_INET, ip, &server_addr.sin_addr);
 
     if(connect(clientSocket, (sockaddr*)& server_addr, sizeof(server_addr)) == ERR_SOCK){
-        #ifdef _WIN32
-            closesocket(clientSocket);
-        #else
-            close(clientSocket);
-        #endif
-            return false;
+        closeSocket(clientSocket);
+        return false;
     }
     std::string command = "GET_FILE " + relativePath;
 
     send(clientSocket, command.c_str(), static_cast<int>(command.size()), 0);
     uint64_t fileSize = 0;
     if(!recvAll(clientSocket, reinterpret_cast<char*>(&fileSize), sizeof(fileSize))){
-        #ifdef _WIN32
-            closesocket(clientSocket);
-        #else   
-            close(clientSocket);
-        #endif
-            return false;
+        closeSocket(clientSocket);
+        return false;
     }
 
     fs::path targetPath = localBaseFolder / relativePath;
     fs::create_directories(targetPath.parent_path());
     std::ofstream outFile(targetPath, std::ios::binary);
     if(!outFile.is_open()){
-        #ifdef _WIN32
-            closesocket(clientSocket);
-        #else   
-            close(clientSocket);
-        #endif
-            return false;
+        closeSocket(clientSocket);
+        return false;
     }
     const size_t bufferSize = 65536;
     std::vector<char>buffer(bufferSize);
@@ -167,23 +163,15 @@ bool downloadFile(const std::string& relativePath, const fs::path& localBaseFold
         size_t toRecv = (std::min)(remaining, static_cast<uint64_t>(bufferSize));
         if(!recvAll(clientSocket, buffer.data(), toRecv)){
             outFile.close();
-            #ifdef _WIN32
-                closesocket(clientSocket);
-            #else   
-                close(clientSocket);
-            #endif
-                return false;
+            closeSocket(clientSocket);
+            return false;
         }
         outFile.write(buffer.data(), toRecv);
         remaining-=toRecv;
     }
     outFile.close();
-    #ifdef _WIN32
-        closesocket(clientSocket);
-    #else   
-        close(clientSocket);
-    #endif
-        return true;
+    closeSocket(clientSocket);
+    return true;
 }
 
 bool downloadFileTo(const std::string& remoteRelativePath, const fs::path& localTargetPath, int port, const char* ip){
@@ -194,11 +182,7 @@ bool downloadFileTo(const std::string& remoteRelativePath, const fs::path& local
     server_addr.sin_port = htons(port);
     inet_pton(AF_INET, ip, &server_addr.sin_addr);
     if (connect(clientSocket, (sockaddr*)&server_addr, sizeof(server_addr)) == ERR_SOCK) {
-#ifdef _WIN32
-        closesocket(clientSocket);
-#else
-        close(clientSocket);
-#endif
+        closeSocket(clientSocket);
         return false;
     }
     std::string command = "GET_FILE " + remoteRelativePath;
@@ -225,11 +209,7 @@ bool downloadFileTo(const std::string& remoteRelativePath, const fs::path& local
         remaining-=chunk;
     }
     outFile.close();
-#ifdef _WIN32
-    closesocket(clientSocket);
-#else
-    close(clientSocket);
-#endif
+    closeSocket(clientSocket);
     return true;  
 }
 
@@ -244,28 +224,16 @@ bool uploadFile(const std::string& relativePath, const fs::path& localBaseFolder
     inet_pton(AF_INET, remoteIp, &server_addr.sin_addr);
 
     if(connect(clientSocket, (sockaddr*)&server_addr, sizeof(server_addr)) == ERR_SOCK){
-        #ifdef _WIN32
-            closesocket(clientSocket);
-        #else
-            close(clientSocket);
-        #endif
+        closeSocket(clientSocket);
         return false;
     }
     std::string command = "PUT_FILE" + relativePath;
     if(!sendAll(clientSocket, command.c_str(), command.size())){
-        #ifdef _WIN32
-            closesocket(clientSocket);
-        #else
-            close(clientSocket);
-        #endif
+        closeSocket(clientSocket);
         return false;
     }
     bool result = sendFileOverSocket(clientSocket, fullPath);
-    #ifdef _WIN32
-        closesocket(clientSocket);
-    #else
-        close(clientSocket);
-    #endif
+    closeSocket(clientSocket);
     return result;
 }
 
@@ -277,20 +245,12 @@ bool deleteRemoteFile(const std::string& relativePath, int remotePort, const cha
     server_addr.sin_port = htons(remotePort);
     inet_pton(AF_INET, remoteIp, &server_addr.sin_addr);
     if(connect(clientSocket, (sockaddr*)&server_addr, sizeof(server_addr))==ERR_SOCK){
-        #ifdef _WIN32
-            closesocket(clientSocket);
-        #else
-            close(clientSocket);
-        #endif
+        closeSocket(clientSocket);
         return false;
     }
     std::string command = "DEL_FILE" + relativePath;
     bool result = sendAll(clientSocket, command.c_str(), command.size());
-    #ifdef _WIN32
-        closesocket(clientSocket);
-    #else
-        close(clientSocket);
-    #endif
+    closeSocket(clientSocket);
     return result;
     
 }
