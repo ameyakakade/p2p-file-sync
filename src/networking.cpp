@@ -1,305 +1,285 @@
-#include <iostream>
-#include <vector>
-#include <string>
-#include <fstream>
-#include <sstream>
-#include <iomanip>
-#include <algorithm>
-#include <filesystem>
-#include <unordered_map>
-#include <cstdint>
-#include <thread>
-#include <chrono>
-#include <set>
-#include <mutex>
-
-#ifdef _WIN32
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <windows.h>
-#pragma comment(lib, "ws2_32.lib")
-#else
-#include <netdb.h>
-#include <arpa/inet.h>
-#include <cstring>
-#include <unistd.h>
-#include <netinet/in.h>
-#endif /* _WIN32 */
-
-#ifdef _WIN32
-#define SOCK SOCKET
-#define INV_SOCK INVALID_SOCKET
-#define ERR_SOCK SOCKET_ERROR
-#else
-#define SOCK int
-#define INV_SOCK (-1)
-#define ERR_SOCK (-1)
-#endif /* win32 */
-
 #include "networking.h"
-#include "filehashing.h"
+#include "merkle_and_diff.h"
 
-void closeSocket(SOCK sc) {
-    #ifdef _WIN32
-        closesocket(sc);
-    #else   
-        close(sc);
-    #endif
+#include <algorithm>
+#include <fstream>
+#include <iostream>
+#include <limits>
+#include <sstream>
+#include <vector>
+
+namespace {
+constexpr uint64_t MAX_STATE_SIZE = 128ULL * 1024ULL * 1024ULL;
+constexpr uint64_t ERROR_FILE_SIZE = (std::numeric_limits<uint64_t>::max)();
+
+SOCK connectTo(const std::string& ip, int port) {
+    SOCK sock = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (sock == INV_SOCK) return INV_SOCK;
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_port = htons(static_cast<uint16_t>(port));
+    if (inet_pton(AF_INET, ip.c_str(), &address.sin_addr) != 1 ||
+        ::connect(sock, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == ERR_SOCK) {
+        closeSocket(sock);
+        return INV_SOCK;
+    }
+    return sock;
 }
 
-int receiveOverSocket(char* buf, int buflen, int port, const char* ip) {
-#ifdef _WIN32
-    WSADATA wsaData;
-    WSAStartup(MAKEWORD(2, 2), &wsaData);
-#endif
-
-    int a = 0;
-    SOCK client_socket = socket(AF_INET, SOCK_STREAM, 0);
-
-    sockaddr_in server_addr{};
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
-    inet_pton(AF_INET, ip, &server_addr.sin_addr);
-
-    if (connect(client_socket, (sockaddr*)&server_addr, sizeof(server_addr)) == ERR_SOCK) {
-        std::cout << "Connection failed.\n";
-#ifdef _WIN32
-        WSACleanup();
-#endif
-        a = -1;
-    } else {
-        a = recv(client_socket, buf, buflen, 0);
-
-#ifdef _WIN32
-        closesocket(client_socket);
-        WSACleanup();
-#else
-        close(client_socket);
-#endif /* _WIN32 */
-    }
-    return a;
+bool sendSize(SOCK sock, uint64_t size) {
+    return sendAll(sock, reinterpret_cast<const char*>(&size), sizeof(size));
 }
 
-bool sendAll(SOCK sock, const char* buffer, size_t length){
-    size_t totalSent = 0;
-    while(totalSent < length){
-        int sent = send(sock, buffer + totalSent, static_cast<int>(length-totalSent), 0);
-        if(sent==0 || sent==ERR_SOCK){
-            return false;
-        }
-        totalSent+=(sent);
-    }
-    return true;
-}
-
-bool recvAll(SOCK sock, char* buffer, size_t length){
-    size_t totalRecd = 0;
-    while(totalRecd < length){
-        int recd = recv(sock, buffer + totalRecd, static_cast<int>(length-totalRecd), 0);
-        if(recd==0 || recd==ERR_SOCK){
-            return false;
-        }
-        totalRecd+=(recd);
-    }
-    return true;
-}
-
-bool sendFileOverSocket(SOCK client, const fs::path& fullPath){
-    std::ifstream file(fullPath, std::ios::binary | std::ios::ate);
-    if(!file.is_open()){
-        uint64_t errSize = 0;
-        sendAll(client, reinterpret_cast<char*>(&errSize), sizeof(errSize));
-        return false;
-    }
-    uint64_t fileSize = file.tellg();
+bool sendFile(SOCK client, const fs::path& filePath) {
+    std::ifstream file(filePath, std::ios::binary | std::ios::ate);
+    if (!file) return sendSize(client, ERROR_FILE_SIZE);
+    const auto end = file.tellg();
+    if (end < 0) return sendSize(client, ERROR_FILE_SIZE);
+    uint64_t remaining = static_cast<uint64_t>(end);
+    if (!sendSize(client, remaining)) return false;
     file.seekg(0, std::ios::beg);
-    if(!sendAll(client, reinterpret_cast<char*>(&fileSize), sizeof(fileSize))){
-        return false;
-    }
-    const size_t bufferSize = 65536; //64KB
-    std::vector<char>buffer(bufferSize);
-    while(fileSize > 0){
-        size_t toRead = (std::min)(static_cast<uint64_t>(bufferSize), fileSize);
-        file.read(buffer.data(), toRead);
-        if(!sendAll(client, buffer.data(), toRead)){
-            return false;
-        }
-        fileSize-=toRead;
+    std::vector<char> buffer(65536);
+    while (remaining > 0) {
+        const size_t amount = static_cast<size_t>((std::min)(remaining, static_cast<uint64_t>(buffer.size())));
+        file.read(buffer.data(), static_cast<std::streamsize>(amount));
+        if (file.gcount() != static_cast<std::streamsize>(amount)) return false;
+        if (!sendAll(client, buffer.data(), amount)) return false;
+        remaining -= amount;
     }
     return true;
 }
 
-bool downloadFile(const std::string& relativePath, const fs::path& localBaseFolder, int port, const char* ip){
-    SOCK clientSocket = socket(AF_INET, SOCK_STREAM, 0);
-    sockaddr_in server_addr{};
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
-    inet_pton(AF_INET, ip, &server_addr.sin_addr);
+void handleClient(SOCK client, const fs::path& root) {
+    std::string command;
+    if (!readLine(client, command)) return;
 
-    if(connect(clientSocket, (sockaddr*)& server_addr, sizeof(server_addr)) == ERR_SOCK){
-        closeSocket(clientSocket);
-        return false;
-    }
-    std::string command = "GET_FILE " + relativePath;
-
-    send(clientSocket, command.c_str(), static_cast<int>(command.size()), 0);
-    uint64_t fileSize = 0;
-    if(!recvAll(clientSocket, reinterpret_cast<char*>(&fileSize), sizeof(fileSize))){
-        closeSocket(clientSocket);
-        return false;
-    }
-
-    fs::path targetPath = localBaseFolder / relativePath;
-    fs::create_directories(targetPath.parent_path());
-    std::ofstream outFile(targetPath, std::ios::binary);
-    if(!outFile.is_open()){
-        closeSocket(clientSocket);
-        return false;
-    }
-    const size_t bufferSize = 65536;
-    std::vector<char>buffer(bufferSize);
-    uint64_t remaining = fileSize;
-    while(remaining > 0){
-        size_t toRecv = (std::min)(remaining, static_cast<uint64_t>(bufferSize));
-        if(!recvAll(clientSocket, buffer.data(), toRecv)){
-            outFile.close();
-            closeSocket(clientSocket);
-            return false;
+    if (command == "GET_STATE") {
+        const std::string data = serializeState(loadState(root));
+        if (data.size() > MAX_STATE_SIZE) {
+            sendSize(client, ERROR_FILE_SIZE);
+            return;
         }
-        outFile.write(buffer.data(), toRecv);
-        remaining-=toRecv;
+        if (sendSize(client, static_cast<uint64_t>(data.size())) && !data.empty())
+            sendAll(client, data.data(), data.size());
+        return;
     }
-    outFile.close();
-    closeSocket(clientSocket);
+
+    if (command == "GET_TREE") {
+        MerkleTree tree;
+        if (tree.buildTree(root, root) < 0) {
+            sendSize(client, ERROR_FILE_SIZE);
+            return;
+        }
+        const std::string data = tree.dumpTreeString();
+        if (data.size() > MAX_STATE_SIZE) {
+            sendSize(client, ERROR_FILE_SIZE);
+            return;
+        }
+        if (sendSize(client, static_cast<uint64_t>(data.size())) && !data.empty())
+            sendAll(client, data.data(), data.size());
+        return;
+    }
+
+    const std::string mkdirPrefix = "MAKE_DIR ";
+    if (command.rfind(mkdirPrefix, 0) == 0) {
+        std::string decoded;
+        if (!decodeHex(command.substr(mkdirPrefix.size()), decoded) ||
+            !isSafeRelativePath(fs::path(decoded))) return;
+        std::error_code ec;
+        fs::create_directories(root / fs::path(decoded), ec);
+        return;
+    }
+
+    const std::string prefix = "GET_FILE ";
+    if (command.rfind(prefix, 0) == 0) {
+        std::string decoded;
+        if (!decodeHex(command.substr(prefix.size()), decoded) || !isSafeRelativePath(fs::path(decoded))) {
+            sendSize(client, ERROR_FILE_SIZE);
+            return;
+        }
+        const fs::path fullPath = root / fs::path(decoded);
+        std::error_code ec;
+        if (!fs::is_regular_file(fullPath, ec) || ec) {
+            sendSize(client, ERROR_FILE_SIZE);
+            return;
+        }
+        sendFile(client, fullPath);
+        return;
+    }
+
+    sendSize(client, ERROR_FILE_SIZE);
+}
+}
+
+void closeSocket(SOCK socket) {
+    if (socket == INV_SOCK) return;
+#ifdef _WIN32
+    closesocket(socket);
+#else
+    ::close(socket);
+#endif
+}
+
+bool sendAll(SOCK socket, const char* buffer, size_t length) {
+    size_t sentTotal = 0;
+    while (sentTotal < length) {
+        const size_t remaining = length - sentTotal;
+#ifdef _WIN32
+        const int sent = ::send(socket, buffer + sentTotal,
+                                static_cast<int>((std::min)(remaining, static_cast<size_t>((std::numeric_limits<int>::max)()))), 0);
+#else
+        const ssize_t sent = ::send(socket, buffer + sentTotal, remaining, 0);
+#endif
+        if (sent <= 0) return false;
+        sentTotal += static_cast<size_t>(sent);
+    }
     return true;
 }
 
-bool downloadFileTo(const std::string& remoteRelativePath, const fs::path& localTargetPath, int port, const char* ip){
-    SOCK clientSocket = socket(AF_INET, SOCK_STREAM, 0);
-    if (clientSocket == INV_SOCK) return false;
-    sockaddr_in server_addr{};
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
-    inet_pton(AF_INET, ip, &server_addr.sin_addr);
-    if (connect(clientSocket, (sockaddr*)&server_addr, sizeof(server_addr)) == ERR_SOCK) {
-        closeSocket(clientSocket);
-        return false;
+bool recvAll(SOCK socket, char* buffer, size_t length) {
+    size_t receivedTotal = 0;
+    while (receivedTotal < length) {
+        const size_t remaining = length - receivedTotal;
+#ifdef _WIN32
+        const int received = ::recv(socket, buffer + receivedTotal,
+                                    static_cast<int>((std::min)(remaining, static_cast<size_t>((std::numeric_limits<int>::max)()))), 0);
+#else
+        const ssize_t received = ::recv(socket, buffer + receivedTotal, remaining, 0);
+#endif
+        if (received <= 0) return false;
+        receivedTotal += static_cast<size_t>(received);
     }
-    std::string command = "GET_FILE " + remoteRelativePath;
-    if(!sendAll(clientSocket, command.c_str(), command.size())){
-        return false;
-    }
-    uint64_t fileSize = 0;
-    if(!recvAll(clientSocket, reinterpret_cast<char*>(&fileSize), sizeof(fileSize))){
-        return false;
-    }
-    fs::create_directories(localTargetPath.parent_path());
-    std::ofstream outFile(localTargetPath, std::ios::binary);
-    if(!outFile.is_open()){
-        return false;
-    }
-    std::vector<char>buffer(65536);
-    uint64_t remaining = fileSize;
-    while(remaining > 0){
-        size_t chunk = (std::min)(remaining, static_cast<uint64_t>(buffer.size()));
-        if(!recvAll(clientSocket, buffer.data(), chunk)){
-            return false;
-        }
-        outFile.write(buffer.data(), static_cast<std::streamsize>(chunk));
-        remaining-=chunk;
-    }
-    outFile.close();
-    closeSocket(clientSocket);
-    return true;  
+    return true;
 }
 
-//=================
-// upload file fxn to send local file to remote
-bool uploadFile(const std::string& relativePath, const fs::path& localBaseFolder, int remotePort, const char* remoteIp){
-    fs::path fullPath = localBaseFolder / relativePath;
-    SOCK clientSocket = socket(AF_INET, SOCK_STREAM, 0);
-    sockaddr_in server_addr{};
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(remotePort);
-    inet_pton(AF_INET, remoteIp, &server_addr.sin_addr);
-
-    if(connect(clientSocket, (sockaddr*)&server_addr, sizeof(server_addr)) == ERR_SOCK){
-        closeSocket(clientSocket);
-        return false;
+bool readLine(SOCK socket, std::string& line, size_t maxLength) {
+    line.clear();
+    while (line.size() < maxLength) {
+        char c = '\0';
+        if (!recvAll(socket, &c, 1)) return false;
+        if (c == '\n') return true;
+        if (c != '\r') line.push_back(c);
     }
-    std::string command = "PUT_FILE" + relativePath;
-    if(!sendAll(clientSocket, command.c_str(), command.size())){
-        closeSocket(clientSocket);
-        return false;
-    }
-    bool result = sendFileOverSocket(clientSocket, fullPath);
-    closeSocket(clientSocket);
-    return result;
+    return false;
 }
 
-// tell remote peer to delete a file on their side
-bool deleteRemoteFile(const std::string& relativePath, int remotePort, const char* remoteIp){
-    SOCK clientSocket = socket(AF_INET, SOCK_STREAM, 0);
-    sockaddr_in server_addr{};
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(remotePort);
-    inet_pton(AF_INET, remoteIp, &server_addr.sin_addr);
-    if(connect(clientSocket, (sockaddr*)&server_addr, sizeof(server_addr))==ERR_SOCK){
-        closeSocket(clientSocket);
-        return false;
+void runServer(const fs::path& root, int port) {
+    SOCK server = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (server == INV_SOCK) {
+        std::cerr << "[Server] socket() failed\n";
+        return;
     }
-    std::string command = "DEL_FILE" + relativePath;
-    bool result = sendAll(clientSocket, command.c_str(), command.size());
-    closeSocket(clientSocket);
-    return result;
-    
+    int reuse = 1;
+#ifdef _WIN32
+    setsockopt(server, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&reuse), sizeof(reuse));
+#else
+    setsockopt(server, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+#endif
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_ANY);
+    address.sin_port = htons(static_cast<uint16_t>(port));
+    if (::bind(server, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == ERR_SOCK) {
+        std::cerr << "[Server] bind failed on port " << port << "\n";
+        closeSocket(server);
+        return;
+    }
+    if (::listen(server, 16) == ERR_SOCK) {
+        std::cerr << "[Server] listen failed\n";
+        closeSocket(server);
+        return;
+    }
+    std::cout << "[Server] Listening on port " << port << " for " << root << "\n";
+    while (true) {
+        sockaddr_in clientAddress{};
+#ifdef _WIN32
+        int addressLength = sizeof(clientAddress);
+        SOCK client = ::accept(server, reinterpret_cast<sockaddr*>(&clientAddress), &addressLength);
+#else
+        socklen_t addressLength = sizeof(clientAddress);
+        SOCK client = ::accept(server, reinterpret_cast<sockaddr*>(&clientAddress), &addressLength);
+#endif
+        if (client == INV_SOCK) continue;
+        handleClient(client, root);
+        closeSocket(client);
+    }
 }
 
-// handling conflict using keep both strategy
-bool handleConflict(const FileDifference& diff, const fs::path& localBaseFolder, int remotePort, const char* remoteIp){
-    if(!diff.hasConflict || diff.isDirectory){
+bool fetchRemoteState(const std::string& ip, int port, std::string& serializedState) {
+    SOCK sock = connectTo(ip, port);
+    if (sock == INV_SOCK) return false;
+    const std::string request = "GET_STATE\n";
+    uint64_t size = 0;
+    bool ok = sendAll(sock, request.data(), request.size()) && recvAll(sock, reinterpret_cast<char*>(&size), sizeof(size));
+    if (!ok || size == ERROR_FILE_SIZE || size > MAX_STATE_SIZE) {
+        closeSocket(sock);
         return false;
     }
-    fs:: path targetPath = localBaseFolder / diff.nodePath;
-    const uint64_t localHash = diff.conflict.localHash;
-    const uint64_t remoteHash = diff.conflict.remoteHash;
-    if(localHash==remoteHash){
-        return true;
+    serializedState.assign(static_cast<size_t>(size), '\0');
+    if (size > 0) ok = recvAll(sock, serializedState.data(), static_cast<size_t>(size));
+    closeSocket(sock);
+    return ok;
+}
+
+bool downloadRemoteFile(const std::string& ip, int port,
+                        const std::string& relativePath, const fs::path& destination) {
+    if (!isSafeRelativePath(fs::path(relativePath))) return false;
+    SOCK sock = connectTo(ip, port);
+    if (sock == INV_SOCK) return false;
+    const std::string request = "GET_FILE " + encodeHex(relativePath) + "\n";
+    uint64_t size = 0;
+    bool ok = sendAll(sock, request.data(), request.size()) && recvAll(sock, reinterpret_cast<char*>(&size), sizeof(size));
+    if (!ok || size == ERROR_FILE_SIZE || size > static_cast<uint64_t>((std::numeric_limits<std::streamsize>::max)())) {
+        closeSocket(sock);
+        return false;
     }
-    const bool localWins = localHash > remoteHash;
-    const uint64_t losingHash = localWins ? remoteHash : localHash;
-    std::string conflictSuffix = ".conflict_" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
-    fs::path conflictPath = targetPath.parent_path() / (targetPath.filename().string() + conflictSuffix);
     std::error_code ec;
-    bool success = true;
-    if(localWins){
-        std::cout << "  Saving remote version to: " << conflictPath.filename() << "\n";
-        if(!fs::exists(conflictPath)){
-            if(!downloadFileTo(diff.nodePath, conflictPath, remotePort, remoteIp)){
-                std::cout << "Failed to download conflict copy" << std::endl;
-                success = false;
-            }
-        }
-        if(success && !uploadFile(diff.nodePath, conflictPath, remotePort, remoteIp)){
-            std::cout << "Failed to upload winning version\n";
-            success = false;
-        }
-    } else{ 
-        std::cout << "  Saving local version to: " << conflictPath.filename() << "\n";
-        if(!fs::exists(conflictPath)){
-            fs::copy_file(targetPath, conflictPath, fs::copy_options::overwrite_existing, ec);
-            if(ec){
-                std::cout << "Failed to save local version" << std::endl;
-                success = false;
-            }
-        }
-        if (success && !downloadFile(diff.nodePath, localBaseFolder, remotePort, remoteIp)) {
-            std::cout << "Failed to download winning version\n";
-            success = false;
-        }
+    fs::create_directories(destination.parent_path(), ec);
+    if (ec) { closeSocket(sock); return false; }
+    std::ofstream out(destination, std::ios::binary | std::ios::trunc);
+    if (!out) { closeSocket(sock); return false; }
+    std::vector<char> buffer(65536);
+    uint64_t remaining = size;
+    while (remaining > 0) {
+        const size_t amount = static_cast<size_t>((std::min)(remaining, static_cast<uint64_t>(buffer.size())));
+        if (!recvAll(sock, buffer.data(), amount)) { ok = false; break; }
+        out.write(buffer.data(), static_cast<std::streamsize>(amount));
+        if (!out) { ok = false; break; }
+        remaining -= amount;
     }
-    if(success){
-        std::cout << "Conflict resolved!\n";    
+    out.close();
+    closeSocket(sock);
+    if (!ok) fs::remove(destination, ec);
+    return ok;
+}
+
+
+bool fetchRemoteMerkleTree(const std::string& ip, int port, MerkleTree& tree) {
+    SOCK sock = connectTo(ip, port);
+    if (sock == INV_SOCK) return false;
+    const std::string request = "GET_TREE\n";
+    uint64_t size = 0;
+    bool ok = sendAll(sock, request.data(), request.size()) &&
+              recvAll(sock, reinterpret_cast<char*>(&size), sizeof(size));
+    if (!ok || size == ERROR_FILE_SIZE || size == 0 || size > MAX_STATE_SIZE) {
+        closeSocket(sock);
+        return false;
     }
-    return success;
+    std::string serialized(static_cast<size_t>(size), '\0');
+    ok = recvAll(sock, serialized.data(), serialized.size());
+    closeSocket(sock);
+    if (!ok) return false;
+    tree.buildTreeString(serialized.c_str());
+    return !tree.pool.empty();
+}
+
+
+bool createRemoteDirectory(const std::string& ip, int port, const std::string& relativePath) {
+    if (!isSafeRelativePath(fs::path(relativePath))) return false;
+    SOCK sock = connectTo(ip, port);
+    if (sock == INV_SOCK) return false;
+    const std::string request = "MAKE_DIR " + encodeHex(relativePath) + "\n";
+    const bool ok = sendAll(sock, request.data(), request.size());
+    closeSocket(sock);
+    return ok;
 }

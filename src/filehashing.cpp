@@ -1,5 +1,7 @@
 #include "filehashing.h"
+
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <vector>
 
@@ -18,27 +20,31 @@ uint64_t calculateBufferHash(const char* data, size_t length) {
     return hash;
 }
 
-uint64_t calculateStringHash(const std::string& inp) {
-    return calculateBufferHash(inp.data(), inp.size());
+uint64_t calculateStringHash(const std::string& input) {
+    return calculateBufferHash(input.data(), input.size());
 }
 
 uint64_t hashFile(const fs::path& filepath) {
     std::ifstream file(filepath, std::ios::binary);
-    if (!file.is_open()) {
-        std::cerr << "Could not open file: " << filepath << "\n";
-        return 0;
-    }
+    if (!file) return 0;
 
-    const size_t bufferSize = 65536;
+    constexpr size_t bufferSize = 65536;
     std::vector<char> buffer(bufferSize);
     uint64_t hash = FNV_OFFSET_BASIS;
-
-    while (file.read(buffer.data(), bufferSize) || file.gcount() > 0) {
-        size_t bytesRead = file.gcount();
-        for (size_t i = 0; i < bytesRead; ++i) {
-            hash ^= static_cast<uint64_t>(static_cast<unsigned char>(buffer[i]));
+    while (file) {
+        file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        const auto count = file.gcount();
+        for (std::streamsize i = 0; i < count; ++i) {
+            hash ^= static_cast<uint64_t>(static_cast<unsigned char>(buffer[static_cast<size_t>(i)]));
             hash *= FNV_PRIME;
         }
     }
+    if (file.bad()) return 0;
     return hash;
+}
+
+std::string hashToHex(uint64_t value) {
+    std::ostringstream out;
+    out << std::hex << std::setfill('0') << std::setw(16) << value;
+    return out.str();
 }
